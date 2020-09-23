@@ -13,6 +13,8 @@ import java.util.function.Function;
 import jdk.internal.access.SharedSecrets;
 
 /**
+ * {@link "https://blog.csdn.net/lylzdd/article/details/86536424"}
+ *
  * 2357
  *
  * @author Doug Lea
@@ -88,6 +90,10 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
             return oldValue;
         }
 
+        /**
+         * equals（）
+         * 作用：判断2个Entry是否相等，必须key和value都相等，才返回true
+         */
         public final boolean equals(Object o) {
             if (o == this)
                 return true;
@@ -105,7 +111,7 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
 
     /**
      * 如果key为null,则hash为0; 否则先获得key的hashcode，然后与这个值的高16位相异或。(异或：两个相同为0，相异为1)
-     * <p>
+     *
      * 这叫做扰动函数，这样做是为了减少hash碰撞的概率，将对象尽可能的分布到整个数组table中。同时，因为这个操作是一个高频操作，所以采用位运算来进行。
      * 那么为什么这样做可以实现这个效果呢？
      * 因为在hashmap中数组分配位置的时候采用的是(n - 1) & hash这个操作。n - 1相当于是一段“11…1”(因为数组长度n一定是2的幂)，
@@ -222,7 +228,7 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
 
     //构造一个空的 HashMap，默认初始容量（16）和默认负载因子（0.75）
     public HashMap() {
-        this.loadFactor = DEFAULT_LOAD_FACTOR; // all other fields defaulted
+        this.loadFactor = DEFAULT_LOAD_FACTOR;
     }
 
     //使用与指定映射相同的映射构造一个新的HashMap。HashMap使用默认负载因子(0.75)和足以在指定映射中保存映射的初始容量创建
@@ -232,29 +238,30 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
     }
 
     /**
-     * Implements Map.putAll and Map constructor.
-     *
-     * @param m     the map
-     * @param evict false when initially constructing this map, else
-     *              true (relayed to method afterNodeInsertion).
+     * putMapEntries函数会被HashMap的拷贝构造函数public HashMap(Map<? extends K, ? extends V> m)或者Map接口的putAll函数（被HashMap给实现了）调用到。
+     * 该函数由于是默认的包访问权限，所以一般情况下用户无法调用。
      */
     final void putMapEntries(Map<? extends K, ? extends V> m, boolean evict) {
         int s = m.size();
+        //传入map的大小不为0，
         if (s > 0) {
-            if (table == null) { // pre-size
+            // 说明是拷贝构造函数来调用的putMapEntries，或者构造后还没放过任何元素
+            if (table == null) {
+                //先不考虑容量必须为2的幂，那么下面括号里会算出来一个容量，使得size刚好不大于阈值。
+                //但这样会算出小数来，但作为容量就必须向上取整，所以这里要加1
                 float ft = ((float) s / loadFactor) + 1.0F;
-                int t = ((ft < (float) MAXIMUM_CAPACITY) ?
-                        (int) ft : MAXIMUM_CAPACITY);
+                //如果小于最大容量，就进行截断；否则就赋值为最大容量
+                int t = ((ft < (float) MAXIMUM_CAPACITY) ? (int) ft : MAXIMUM_CAPACITY);
+                //只有在算出来的容量t > 当前暂存的容量(容量可能会暂放到阈值上的)时，才会用t计算出新容量，再暂时放到阈值上
                 if (t > threshold)
                     threshold = tableSizeFor(t);
+                //说明table已经初始化过了；判断传入map的size是否大于当前map的threshold，如果是，必须要resize
+                //这种情况属于预先扩大容量，再put元素
             } else {
-                // Because of linked-list bucket constraints, we cannot
-                // expand all at once, but can reduce total resize
-                // effort by repeated doubling now vs later
                 while (s > threshold && table.length < MAXIMUM_CAPACITY)
                     resize();
             }
-
+            //循环里的putVal可能也会触发resize
             for (Map.Entry<? extends K, ? extends V> e : m.entrySet()) {
                 K key = e.getKey();
                 V value = e.getValue();
@@ -395,7 +402,16 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
         return null;
     }
 
-    //初始化数组或者扩容
+    /**
+     * 扩容的过程:
+     * 1. 如果table == null,则为HashMap的初始化,生成空table返回即可;
+     * 2. 如果table不为空,需要重新计算table的长度, newLength = oldLength << 1(注,如果原oldLength已经到了上限,则newLength = oldLength);
+     * 3. 遍历oldTable:
+     * 3.1 首节点为空, 本次循环结束;
+     * 3.2 无后续节点, 重新计算hash位, 本次循环结束;
+     * 3.3 当前是红黑树, 走红黑树的重定位;
+     * 3.4 当前是链表, JAVA7时还需要重新计算hash位, 但是JAVA8做了优化, 通过(e.hash & oldCap) == 0来判断是否需要移位; 如果为真则在原位不动, 否则则需要移动到当前hash槽位 + oldCap的位置;
+     */
     final Node<K, V>[] resize() {
         Node<K, V>[] oldTab = table;                        //旧的数组
         int oldCap = (oldTab == null) ? 0 : oldTab.length;  //旧的容量
@@ -403,9 +419,11 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
         int newCap = 0;                                     //新的容量
         int newThr = 0;                                     //新的阈值
 
-        // 如果扩容过(oldCap > 0)，就将新容量和新阈值都变成原来的两倍，或者旧容量就已经大于等于最大值的情况下就不变，直接返回。
+        // 只有非第一次扩容才会进来（第一次扩容在第一次put），就将新容量和新阈值都变成原来的两倍，或者旧容量就已经大于等于最大值的情况下就不变，直接返回。
         if (oldCap > 0) {
+            // oldCap最大为MAXIMUM_CAPACITY(2^30)
             if (oldCap >= MAXIMUM_CAPACITY) {
+                //threshold变成MAX_VALUE(2^31-1),随它们碰撞。但是oldCap不改变,因为如果oldCap翻倍就为负数了,
                 threshold = Integer.MAX_VALUE;
                 return oldTab;
                 // 将数组大小扩大一倍
@@ -453,6 +471,8 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
                         Node<K, V> next;
                         do {
                             next = e.next;
+                            //ashMap扩容时的rehash方法中(e.hash & oldCap) == 0算法推导
+                            @link "https://blog.csdn.net/u010425839/article/details/106620440/"
                             if ((e.hash & oldCap) == 0) {
                                 if (loTail == null)
                                     loHead = e;
@@ -470,7 +490,7 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
 
                         if (loTail != null) {
                             loTail.next = null;
-                            // 第一条链表
+                            // 第一条链表(e.hash & oldCap) == 0
                             newTab[j] = loHead;
                         }
 
@@ -1742,12 +1762,19 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
     // Tree bins
 
     //转化为红黑树的节点类
+
+
+    /**
+     * TreeNode具备红黑树的性质，但又有异于红黑树，由于两种存储形式的存在，插入或删除都要实现两部分的逻辑以及进行当前存储形式的判断
+     * 链栈: prev + next实现，节点数<7
+     * 树: parent + left + right实现
+     */
     static final class TreeNode<K, V> extends LinkedHashMap.Entry<K, V> {
-        TreeNode<K, V> parent;  // red-black tree links
+        TreeNode<K, V> parent;
         TreeNode<K, V> left;
         TreeNode<K, V> right;
-        TreeNode<K, V> prev;    // needed to unlink next upon deletion
-        boolean red;
+        TreeNode<K, V> prev;
+        boolean red;    // 记录树节点颜色
 
         TreeNode(int hash, K key, V val, Node<K, V> next) {
             super(hash, key, val, next);
@@ -1908,13 +1935,19 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
         }
 
         /**
-         * Tree version of putVal.
+         * Hashmap的put方法在进行操作的时候会，先根据key找到 该元素应该存在数组上的具体位置------table[i]。
+         * 其中有一步操作是(p instanceof TreeNode)，也就是判断该节点是不是树形节点。
+         * 也就是判断此时，该位置的链表是否已经构建成红黑树。如果是的话将执行putTreeVal(this, tab, hash, key, value)方法
          */
-        final TreeNode<K, V> putTreeVal(HashMap<K, V> map, Node<K, V>[] tab,
-                                        int h, K k, V v) {
+        final TreeNode<K, V> putTreeVal(HashMap<K, V> map, Node<K, V>[] tab, int h, K k, V v) {
+            // map  当前Hashmap对象
+            // tab  Hashmap对象中的table数组
+            // h    hash值
+            // K    key
+            // V    value
             Class<?> kc = null;
-            boolean searched = false;
-            TreeNode<K, V> root = (parent != null) ? root() : this;
+            boolean searched = false;  //标识是否被收索过
+            TreeNode<K, V> root = (parent != null) ? root() : this;  // 找到root根节点
             for (TreeNode<K, V> p = root; ; ) {
                 int dir, ph;
                 K pk;
@@ -2124,8 +2157,8 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
         /* ------------------------------------------------------------ */
         // Red-black tree methods, all adapted from CLR
 
-        static <K, V> TreeNode<K, V> rotateLeft(TreeNode<K, V> root,
-                                                TreeNode<K, V> p) {
+        //左旋
+        static <K, V> TreeNode<K, V> rotateLeft(TreeNode<K, V> root, TreeNode<K, V> p) {
             TreeNode<K, V> r, pp, rl;
             if (p != null && (r = p.right) != null) {
                 if ((rl = p.right = r.left) != null)
@@ -2142,8 +2175,8 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
             return root;
         }
 
-        static <K, V> TreeNode<K, V> rotateRight(TreeNode<K, V> root,
-                                                 TreeNode<K, V> p) {
+        //右旋
+        static <K, V> TreeNode<K, V> rotateRight(TreeNode<K, V> root, TreeNode<K, V> p) {
             TreeNode<K, V> l, pp, lr;
             if (p != null && (l = p.left) != null) {
                 if ((lr = p.left = l.right) != null)

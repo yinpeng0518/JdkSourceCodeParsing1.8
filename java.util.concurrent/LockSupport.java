@@ -10,6 +10,12 @@ import sun.misc.Unsafe;
  * LockSupport和每个使用它的线程都与一个许可(permit)关联。permit相当于1，0的开 关，默认是0，调用一次unpark就加1变成1，
  * 调用一次park会消费permit, 也就是将1变成0，同时park立即返 回。再次调用park会变成block（因为permit为0了，会阻塞在这里，直到permit变为1）,
  * 这时调用unpark会把 permit置为1。每个线程都有一个相关的permit, permit最多只有一个，重复调用unpark也不会积累。
+ *
+ * 注意:
+ * 1.Object 的 wait()/notify 方法需要获取到对象锁之后在同步代码块里才能调用，而 LockSupport 不需要获取锁。所以使用 LockSupport 线程间不需要维护一个共享的同步对象，从而实现了线程间的解耦。
+ * 2.unark()方法可提前 park()方法调用，所以不需要担心线程间执行的先后顺序。
+ * 3.多次调用 unpark()方法和调用一次 unpark()方法效果一样，因为 unpark 方法是直接将_counter 赋值为 1，而不是加 1。
+ * 4.许可不可重入，也就是说只能调用一次 park()方法，如果多次调用 park()线程会一直阻塞。
  */
 public class LockSupport {
     private LockSupport() {

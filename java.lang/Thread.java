@@ -11,6 +11,7 @@ import java.util.HashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.locks.LockSupport;
+
 import sun.nio.ch.Interruptible;
 import sun.reflect.CallerSensitive;
 import sun.reflect.Reflection;
@@ -18,7 +19,7 @@ import sun.security.util.SecurityConstants;
 
 /**
  * {@link "https://blog.csdn.net/ydonghao2/article/details/107453376"}
- * 
+ *
  * 多线程编程一直是业界公认比较难也是比较重要，而且是非常基础的一点，掌握它非常重要。Java中多线程编程比较幸福，因为Jdk工程师们考虑了很多东西尽量减少使用Java的难度和复杂度。
  * 其实在C++之中是没有内建多线程的，它依赖操作系统提供这个特性，因为C++为了效率，控制C++适用的应用程序的范围。即C++没有内建多线程，它允许你直接使用操作系统提供的多线程.
  * 这也意味着你在Linux系统下编写的C++多线程代码很有可能在Windows下不能运行，这也是架构师技术选型的时候一个重要考虑点。
@@ -27,16 +28,33 @@ public class Thread implements Runnable {
 
     //确保 registerNatives（） 会在 clinit 中调用
     private static native void registerNatives();  //注册native方法
+
     static {
         registerNatives();  //registerNatives 是这个类使用到了native方法，这样注册这个类的native方法。
     }
 
     private volatile String name;  //表示Thread的名字，可以通过Thread类的构造器中的参数来指定线程名字
-    private int priority;          //表示线程的优先级（最大值为10，最小值为1，默认值为5）
+
+    /**
+     * 表示线程的优先级（最大值为10，最小值为1，默认值为5）
+     * 虽然 Java 提供了 10 个优先级别，但这些优先级别需要操作系统的支持，所以需要注意:
+     * 1.操作系统的优先级可能不能很好的和 Java 的 10 个优先级别对应，所以最好使用 MAX_PRIORITY、MIN_PRIORITY 和 NORM_PRIORITY 三个静态常量来设定优先级，以保证程序更好的可移植性。
+     * 2.线程优先级不能作为程序正确性的依赖，因为操作系统可以完全不用理会 Java 线程对于优先级的设定。
+     */
+    private int priority;
     private Thread threadQ;
     private long eetop;
     private boolean single_step;                               //是否单步执行此线程
-    private boolean daemon = false;  //表示线程是否是守护线程，如果在main线程中创建了一个守护线程，当main方法运行完毕之后，守护线程也会随着消亡。在JVM中，垃圾收集器线程就是守护线程。
+
+    /**
+     * Daemon 线程是一种支持型线程，在后台守护一些系统服务，比如 JVM 的垃圾回收、内存管理等线程都是守护线程。
+     * 与之对应的就是用户线程，用户线程就是系统的工作线程，它会完成整个系统的业务操作。
+     * 用户线程结束后就意味着整个系统的任务全部结束了，因此系统就没有对象需要守护的了，守护线程自然而然就会退出。所以当一个 Java 应用只有守护线程的时候，虚拟机就会自然退出。
+     *
+     * 调用 setDaemon(boolean on)设置守护线程要在线程启动前，否则会抛出异常。
+     * 守护线程在退出的时候并不会执行 finnaly 块中的代码，所以将释放资源等操作不要放在 finnaly 块中执行，这种操作是不安全的
+     */
+    private boolean daemon = false;
     private boolean stillborn = false;                         //JVM 状态
     private Runnable target;                                   //要执行的任务
     private ThreadGroup group;                                 //线程群组
@@ -49,7 +67,7 @@ public class Thread implements Runnable {
     private long nativeParkEventPointer;                       //在本机线程终止后持续存在的jvm私有状态
     private long tid;                                          //线程ID
     private static long threadSeqNumber;                       //用于生成线程ID
-    private volatile int threadStatus = 0;                     //工具的Java线程状态，初始化表示线程“尚未启动”
+    private volatile int threadStatus = 0;                     //线程状态，初始化表示线程“尚未启动”
 
 
     private static synchronized long nextThreadID() {
@@ -86,6 +104,7 @@ public class Thread implements Runnable {
     public final static int MIN_PRIORITY = 1;     //线程可以拥有的最低优先级
     public final static int NORM_PRIORITY = 5;    //分配给线程的默认优先级
     public final static int MAX_PRIORITY = 10;    //线程可以拥有的最高优先级
+
     public static native Thread currentThread();  //返回对当前执行线程对象的引用
 
     /**
@@ -100,6 +119,7 @@ public class Thread implements Runnable {
      * 则即使调用sleep方法，其他线程也无法访问这个对象。sleep方法相当于让线程进入阻塞状态
      */
     public static native void sleep(long millis) throws InterruptedException;
+
     public static void sleep(long millis, int nanos) throws InterruptedException {
         if (millis < 0) {
             throw new IllegalArgumentException("timeout value is negative");
@@ -107,7 +127,7 @@ public class Thread implements Runnable {
 
         if (nanos < 0 || nanos > 999999) {
             throw new IllegalArgumentException(
-                                "nanosecond timeout value out of range");
+                    "nanosecond timeout value out of range");
         }
 
         if (nanos >= 500000 || (nanos != 0 && millis == 0)) {
@@ -117,12 +137,16 @@ public class Thread implements Runnable {
         sleep(millis);
     }
 
-  
     private void init(ThreadGroup g, Runnable target, String name, long stackSize) {
         init(g, target, name, stackSize, null, true);
     }
 
-    //初始化一个线程
+    /**
+     * 初始化一个线程
+     * 新构造的线程对象是由其 parent 线程来进行空间分配的。
+     * 新线程继承了 parent 线程的 group、是否为 Daemon、优先级 priority、加载资源的 contextClassLoader、可继承的 ThreadLocal。
+     * parent 线程会分配一个唯一的 ID 来标识这个 child 新线程
+     */
     private void init(ThreadGroup g,    //线程组
                       Runnable target,  //要执行的任务
                       String name,      //线程的名字
@@ -152,6 +176,7 @@ public class Thread implements Runnable {
             }
         }
         g.addUnstarted();
+        // 新线程继承了parent线程的group、是否为Daemon、优先级priority、加载资源的contextClassLoader、可继承的ThreadLocal。
         this.group = g;
         this.daemon = parent.isDaemon();
         this.priority = parent.getPriority();
@@ -165,7 +190,6 @@ public class Thread implements Runnable {
         if (inheritThreadLocals && parent.inheritableThreadLocals != null)
             //创建线程共享变量副本
             this.inheritableThreadLocals = ThreadLocal.createInheritedMap(parent.inheritableThreadLocals);
-        /* Stash the specified stack size in case the VM cares */
         this.stackSize = stackSize;
 
         //分配线程id
@@ -215,7 +239,7 @@ public class Thread implements Runnable {
         init(group, target, name, stackSize);
     }
 
-   
+
     /**
      * 启动一个新线程，在新的线程运行run方法中的代码
      * start方法只是让线程进入就绪状态，里面的代码不一定立刻运行(CPU的时间片还没分给他).
@@ -295,10 +319,19 @@ public class Thread implements Runnable {
     }
 
     /**
-     * 打断线程
-     * 如果被打断线程正在 sleep，wait，join 会导致被打断的线程抛出 InterruptedException，并清除 打断标记 ；
-     * 如果打断的正在运行的线程，则会设置打断标记 ；
-     * 打断par 线程, 不会清空打断状态，如果打断标记已经是true, 则park会失效
+     * 设置一个线程的中断状态为true
+     *
+     * 中断代表线程状态，每个线程都关联了一个中断状态，用boolean值表示，初始值为false。中断一个线程，其实就是设置了这个线程的中断状态boolean值为true。
+     * 注意区分字面意思，中断只是一个状态，处于中断状态的线程不一定要停止运行。
+     *
+     * 如果被打断线程正在 sleep，wait，join 会导致被打断的线程抛出 InterruptedException，并清除打断标记;
+     * 如果打断的正在运行的线程，则会设置打断标记;
+     * 打断park线程,不会清空打断状态，如果打断标记已经是true, 则park会失效
+     *
+     * 自动感知中断,以下方法会自动感知中断:
+     * Object 类的 wait()、wait(long)、wait(long, int)
+     * Thread 类的 join()、join(long)、join(long, int)、sleep(long)、sleep(long, int)
+     * 当一个线程处于sleep、wait、join 这三种状态之一时，如果此时线程中断状态为true，那么就会抛出一个 InterruptedException 的异常，并将中断状态重新设置为false
      */
     public void interrupt() {
         if (this != Thread.currentThread())
@@ -315,12 +348,13 @@ public class Thread implements Runnable {
         interrupt0();
     }
 
-    //判断当前线程是否被打断,会清除打断标记
+    // 检测调用这个方法的线程是否已经中断，处于中断状态返回true
+    // 注意：这个方法返回中断状态的同时，会将此线程的中断状态重置为false
     public static boolean interrupted() {
         return currentThread().isInterrupted(true);
     }
 
-    //判断是否被打断，不会清除打断标记
+    // 检测线程中断状态，处于中断状态返回true,不会将此线程的中断状态重置为false
     public boolean isInterrupted() {
         return isInterrupted(false);
     }
@@ -357,7 +391,7 @@ public class Thread implements Runnable {
         if (newPriority > MAX_PRIORITY || newPriority < MIN_PRIORITY) {
             throw new IllegalArgumentException();
         }
-        if((g = getThreadGroup()) != null) {
+        if ((g = getThreadGroup()) != null) {
             if (newPriority > g.getMaxPriority()) {
                 newPriority = g.getMaxPriority();
             }
@@ -401,23 +435,22 @@ public class Thread implements Runnable {
     }
 
     /**
-     * 将当前线程的线程组及其子线程组中的每个活动线程复制到指定数组中。这个方法只是调用当前线程的线程组的ThreadGroup.enumerate(Thread[])方法。 
+     * 将当前线程的线程组及其子线程组中的每个活动线程复制到指定数组中。这个方法只是调用当前线程的线程组的ThreadGroup.enumerate(Thread[])方法。
      * 应用程序可以使用activeCount方法来估计数组应该有多大，但是如果数组太短，容纳不了所有线程，那么额外的线程将被忽略。
-     * 如果获取当前线程的线程组及其子线程组中的每个活动线程非常重要，那么调用者应该验证返回的int值是否严格小于tarray的长度。 
+     * 如果获取当前线程的线程组及其子线程组中的每个活动线程非常重要，那么调用者应该验证返回的int值是否严格小于tarray的长度。
      * 由于此方法中固有的竞态条件，建议仅将此方法用于调试和监视目的。
      */
     public static int enumerate(Thread tarray[]) {
         return currentThread().getThreadGroup().enumerate(tarray);
     }
- 
+
     @Deprecated
     public native int countStackFrames();
 
     /**
-     * 等待线程死亡的时间最多为millis毫秒。超时为0意味着永远等待。 
-     * 这个实现使用这个的循环。在此条件下等待呼叫，我还活着。当线程终止此时。
-     * 调用notifyAll方法。建议应用程序不要在线程实例上使用wait、notify或notifyAll。
-     * @throws  InterruptedException 如果有线程中断了当前线程。抛出此异常时清除当前线程的中断状态
+     * 当前线程等待该线程终止的时间最长为 millis 毫秒。如果在millis时间内，该线程没有执行完，那么当前线程进入就绪状态，重新等待cpu调度
+     *
+     * @throws InterruptedException 如果有线程中断了当前线程。抛出此异常时清除当前线程的中断状态
      */
     public final synchronized void join(long millis) throws InterruptedException {
         long base = System.currentTimeMillis();
@@ -428,10 +461,14 @@ public class Thread implements Runnable {
         }
 
         if (millis == 0) {
+            // 只要子线程isAlve，主线程就一直挂起
             while (isAlive()) {
                 wait(0);
             }
         } else {
+            // 1.delay时间>0，主线程wait delay时间
+            // 2.主线程自动唤醒之后，再次检查如果子线程isAlive且delay时间还没到就就继续将主线程wait
+            // 3.循环1 2 ，直到子线程MyThread执行完或者主线程wait时间超过millis
             while (isAlive()) {
                 long delay = millis - now;
                 if (delay <= 0) {
@@ -443,13 +480,14 @@ public class Thread implements Runnable {
         }
     }
 
+    // 等待该线程终止的时间最长为 millis 毫秒 + nanos 纳秒。如果在millis时间内，该线程没有执行完，那么当前线程进入就绪状态，重新等待cpu调度
     public final synchronized void join(long millis, int nanos) throws InterruptedException {
         if (millis < 0) {
             throw new IllegalArgumentException("timeout value is negative");
         }
         if (nanos < 0 || nanos > 999999) {
             throw new IllegalArgumentException(
-                                "nanosecond timeout value out of range");
+                    "nanosecond timeout value out of range");
         }
         if (nanos >= 500000 || (nanos != 0 && millis == 0)) {
             millis++;
@@ -457,7 +495,7 @@ public class Thread implements Runnable {
         join(millis);
     }
 
-    //等待线程运行结束
+    // 当前线程加入该线程后面，等待该线程终止。
     public final void join() throws InterruptedException {
         join(0);
     }
@@ -466,7 +504,7 @@ public class Thread implements Runnable {
      * Prints a stack trace of the current thread to the standard error stream.
      * This method is used only for debugging.
      *
-     * @see     Throwable#printStackTrace()
+     * @see Throwable#printStackTrace()
      */
     public static void dumpStack() {
         new Exception("Stack trace").printStackTrace();
@@ -480,7 +518,7 @@ public class Thread implements Runnable {
         }
         daemon = on;
     }
-    
+
     //测试此线程是否为守护线程
     public final boolean isDaemon() {
         return daemon;
@@ -493,14 +531,15 @@ public class Thread implements Runnable {
             security.checkAccess(this);
         }
     }
+
     public String toString() {
         ThreadGroup group = getThreadGroup();
         if (group != null) {
             return "Thread[" + getName() + "," + getPriority() + "," +
-                           group.getName() + "]";
+                    group.getName() + "]";
         } else {
             return "Thread[" + getName() + "," + getPriority() + "," +
-                            "" + "]";
+                    "" + "]";
         }
     }
 
@@ -511,7 +550,7 @@ public class Thread implements Runnable {
         SecurityManager sm = System.getSecurityManager();
         if (sm != null) {
             ClassLoader.checkClassLoaderPermission(contextClassLoader,
-                                                   Reflection.getCallerClass());
+                    Reflection.getCallerClass());
         }
         return contextClassLoader;
     }
@@ -524,7 +563,7 @@ public class Thread implements Runnable {
         contextClassLoader = cl;
     }
 
-    
+
     //当且仅当当前线程持有指定对象上的监视器锁时，返回true。 该方法允许程序断言当前线程已经持有指定的锁: 断言Thread.holdsLock (obj);
     public static native boolean holdsLock(Object obj);
 
@@ -534,8 +573,8 @@ public class Thread implements Runnable {
      * 返回表示此线程的堆栈转储的堆栈跟踪元素数组。
      * 如果这个线程还没有启动，已经启动但还没有被系统计划运行，或者已经终止，这个方法将返回一个零长度的数组。
      * 如果返回的数组长度为非零，则数组的第一个元素表示堆栈的顶部，即序列中最近的方法调用。
-     * 数组的最后一个元素表示堆栈的底部，它是序列中最近的方法调用。 
-     * 如果存在安全管理器，并且该线程不是当前线程，则使用RuntimePermission(“getStackTrace”)权限调用安全管理器的checkPermission方法，以查看是否可以获取堆栈跟踪。 
+     * 数组的最后一个元素表示堆栈的底部，它是序列中最近的方法调用。
+     * 如果存在安全管理器，并且该线程不是当前线程，则使用RuntimePermission(“getStackTrace”)权限调用安全管理器的checkPermission方法，以查看是否可以获取堆栈跟踪。
      * 在某些情况下，一些虚拟机可能会从堆栈跟踪中省略一个或多个堆栈帧。在极端情况下，不包含与此线程相关的堆栈跟踪信息的虚拟机允许从此方法返回长度为零的数组。
      */
     public StackTraceElement[] getStackTrace() {
@@ -544,14 +583,14 @@ public class Thread implements Runnable {
             SecurityManager security = System.getSecurityManager();
             if (security != null) {
                 security.checkPermission(
-                    SecurityConstants.GET_STACK_TRACE_PERMISSION);
+                        SecurityConstants.GET_STACK_TRACE_PERMISSION);
             }
             // optimization so we do not call into the vm for threads that
             // have not yet started or have terminated
             if (!isAlive()) {
                 return EMPTY_STACK_TRACE;
             }
-            StackTraceElement[][] stackTraceArray = dumpThreads(new Thread[] {this});
+            StackTraceElement[][] stackTraceArray = dumpThreads(new Thread[]{this});
             StackTraceElement[] stackTrace = stackTraceArray[0];
             // a thread that was alive during the previous isAlive call may have
             // since terminated, therefore not having a stacktrace.
@@ -569,7 +608,7 @@ public class Thread implements Runnable {
      * 返回所有活动线程的堆栈跟踪映射。
      * 映射键是线程，每个映射值是一个StackTraceElement数组，表示相应线程的堆栈转储。返回的堆栈跟踪采用为getStackTrace方法指定的格式。
      * 在调用此方法时，线程可能正在执行。每个线程的堆栈跟踪只表示一个快照，每个堆栈跟踪可以在不同的时间获得。
-     * 如果虚拟机没有关于线程的堆栈跟踪信息，则映射值中将返回一个零长度数组。 
+     * 如果虚拟机没有关于线程的堆栈跟踪信息，则映射值中将返回一个零长度数组。
      * 如果存在安全管理器，则使用RuntimePermission(“getStackTrace”)权限和RuntimePermission(“modifyThreadGroup”)权限调用安全管理器的checkPermission方法，以查看是否可以获得所有线程的堆栈跟踪。
      */
     public static Map<Thread, StackTraceElement[]> getAllStackTraces() {
@@ -577,9 +616,9 @@ public class Thread implements Runnable {
         SecurityManager security = System.getSecurityManager();
         if (security != null) {
             security.checkPermission(
-                SecurityConstants.GET_STACK_TRACE_PERMISSION);
+                    SecurityConstants.GET_STACK_TRACE_PERMISSION);
             security.checkPermission(
-                SecurityConstants.MODIFY_THREADGROUP_PERMISSION);
+                    SecurityConstants.MODIFY_THREADGROUP_PERMISSION);
         }
 
         // Get a snapshot of the list of all threads
@@ -598,10 +637,12 @@ public class Thread implements Runnable {
 
 
     private static final RuntimePermission SUBCLASS_IMPLEMENTATION_PERMISSION = new RuntimePermission("enableContextClassLoaderOverride");
+
     private static class Caches {
-        static final ConcurrentMap<WeakClassKey,Boolean> subclassAudits = ew ConcurrentHashMap<>();
+        static final ConcurrentMap<WeakClassKey, Boolean> subclassAudits = ew ConcurrentHashMap<>();
         static final ReferenceQueue<Class<?>> subclassAuditsQueue = new ReferenceQueue<>();
     }
+
     private static boolean isCCLOverridden(Class<?> cl) {
         if (cl == Thread.class)
             return false;
@@ -616,33 +657,35 @@ public class Thread implements Runnable {
 
         return result.booleanValue();
     }
+
     private static boolean auditSubclass(final Class<?> subcl) {
         Boolean result = AccessController.doPrivileged(
-            new PrivilegedAction<Boolean>() {
-                public Boolean run() {
-                    for (Class<?> cl = subcl;
-                         cl != Thread.class;
-                         cl = cl.getSuperclass())
-                    {
-                        try {
-                            cl.getDeclaredMethod("getContextClassLoader", new Class<?>[0]);
-                            return Boolean.TRUE;
-                        } catch (NoSuchMethodException ex) {
+                new PrivilegedAction<Boolean>() {
+                    public Boolean run() {
+                        for (Class<?> cl = subcl;
+                             cl != Thread.class;
+                             cl = cl.getSuperclass()) {
+                            try {
+                                cl.getDeclaredMethod("getContextClassLoader", new Class<?>[0]);
+                                return Boolean.TRUE;
+                            } catch (NoSuchMethodException ex) {
+                            }
+                            try {
+                                Class<?>[] params = {ClassLoader.class};
+                                cl.getDeclaredMethod("setContextClassLoader", params);
+                                return Boolean.TRUE;
+                            } catch (NoSuchMethodException ex) {
+                            }
                         }
-                        try {
-                            Class<?>[] params = {ClassLoader.class};
-                            cl.getDeclaredMethod("setContextClassLoader", params);
-                            return Boolean.TRUE;
-                        } catch (NoSuchMethodException ex) {
-                        }
+                        return Boolean.FALSE;
                     }
-                    return Boolean.FALSE;
                 }
-            }
         );
         return result.booleanValue();
     }
+
     private native static StackTraceElement[][] dumpThreads(Thread[] threads);
+
     private native static Thread[] getThreads();
 
     //返回此线程的标识符。线程ID是创建该线程时生成的一个正长数字。线程ID是唯一的，并且在其生命周期中保持不变。当一个线程被终止时，这个线程ID可以被重用
@@ -652,16 +695,39 @@ public class Thread implements Runnable {
 
     //线程状态
     public enum State {
-        NEW,  //尚未启动的线程的线程状态
-        RUNNABLE, //可运行线程的线程状态,处于runnable状态的线程正在Java虚拟机中执行，但是它可能在等待操作系统中的其他资源，比如处理器
-        BLOCKED, //线程正在等待监视器锁,正在synchronized块/方法上等待获取锁,或者调用了Object.wait(),等待重新获得锁进入同步块
 
         /**
-         * 等待线程的线程状态 
+         * 当程序使用 new 关键字创建了一个线程之后，线程就处于新建状态，此时的线程情况如下:
+         * 1.此时 JVM 为其分配内存，并初始化其成员变量的值；
+         * 2.此时线程对象没有表现出任何线程的动态特征，程序也不会执行线程的线程执行体；
+         */
+        NEW,
+
+        /**
+         * 当线程对象调用了 start()方法之后，线程处于就绪状态。此时的线程情况如下:
+         * 1.此时 JVM 会为其创建方法调用栈和程序计数器；
+         * 2.线程并没有开始运行，而是等待系统为其分配 CPU 时间片；
+         *
+         * 当线程获得了 CPU 时间片，CPU 调度处于就绪状态的线程并执行 run()方法的线程执行体，则该线程处于运行状态。
+         * 如果计算机只有一个CPU，那么在任何时刻只有一个线程处于运行状态；
+         * 如果在一个多处理器的机器上，将会有多个线程并行执行，处于运行状态；
+         * 当线程数大于处理器数时，依然会存在多个线程在同一个CPU上轮换的现象；
+         * 对于采用抢占式策略的系统而言，系统会给每个可执行的线程分配一个时间片来处理任务；当该时间片用完后，
+         * 系统就会剥夺该线程所占用的资源，让其他线程获得执行的机会。此时线程就会又从运行状态变为就绪状态，重新等待系统分配资源。
+         */
+        RUNNABLE,
+
+        /**
+         * 处于运行状态的线程在某些情况下，让出 CPU 并暂时停止自己的运行，进入阻塞状态。如：线程阻塞于 synchronized 锁。
+         */
+        BLOCKED,
+
+        /**
+         * 等待线程的线程状态
          * 一个线程由于调用下列方法之一而处于等待状态:
-         *  1. Object.wait with no timeout
-         *  2. Thread.join with no timeout
-         *  3. LockSupport.park
+         * 1. Object.wait with no timeout
+         * 2. Thread.join with no timeout
+         * 3. LockSupport.park
          * 处于等待状态的线程正在等待另一个线程执行特定的操作
          * 例如，一个在对象上调用object. wait()的线程正在等待另一个线程在该对象上调用object.notify()或object.notifyall()。
          * 调用thread .join()的线程正在等待指定的线程终止。
@@ -671,14 +737,21 @@ public class Thread implements Runnable {
         /**
          * 具有指定等待时间的等待线程的线程状态
          * 线程处于定时等待状态，因为调用以下方法之一，具有指定的正等待时间:
-         *  1.Thread.sleep
-         *  2.Object.wait  with timeout
-         *  3.Thread.join  with timeout
-         *  4.LockSupport.parkNanos
-         *  5.LockSupport.parkUntil
+         * 1.Thread.sleep
+         * 2.Object.wait  with timeout
+         * 3.Thread.join  with timeout
+         * 4.LockSupport.parkNanos
+         * 5.LockSupport.parkUntil
          */
         TIMED_WAITING,
-        TERMINATED; //终止线程的线程状态。线程已经完成执行
+
+        /**
+         * 线程会以如下 3 种方式结束，结束后就处于死亡状态：
+         * ① run()或 call()方法执行完成，线程正常结束；
+         * ② 线程抛出一个未捕获的 Exception 或 Error；
+         * ③ 直接调用该线程 stop()方法来结束该线程—该方法容易导致死锁，通常不推荐使用
+         */
+        TERMINATED;
     }
 
     //返回此线程的状态。这种方法是为监控系统状态而设计的，不是为同步控制而设计的。
@@ -718,6 +791,7 @@ public class Thread implements Runnable {
          * given uncaught exception.
          * <p>Any exception thrown by this method will be ignored by the
          * Java Virtual Machine.
+         *
          * @param t the thread
          * @param e the exception
          */
@@ -750,12 +824,10 @@ public class Thread implements Runnable {
      * infinite recursion.
      *
      * @param eh the object to use as the default uncaught exception handler.
-     * If <tt>null</tt> then there is no default handler.
-     *
+     *           If <tt>null</tt> then there is no default handler.
      * @throws SecurityException if a security manager is present and it
-     *         denies <tt>{@link RuntimePermission}
-     *         (&quot;setDefaultUncaughtExceptionHandler&quot;)</tt>
-     *
+     *                           denies <tt>{@link RuntimePermission}
+     *                           (&quot;setDefaultUncaughtExceptionHandler&quot;)</tt>
      * @see #setUncaughtExceptionHandler
      * @see #getUncaughtExceptionHandler
      * @see ThreadGroup#uncaughtException
@@ -765,22 +837,23 @@ public class Thread implements Runnable {
         SecurityManager sm = System.getSecurityManager();
         if (sm != null) {
             sm.checkPermission(
-                new RuntimePermission("setDefaultUncaughtExceptionHandler")
-                    );
+                    new RuntimePermission("setDefaultUncaughtExceptionHandler")
+            );
         }
 
-         defaultUncaughtExceptionHandler = eh;
-     }
+        defaultUncaughtExceptionHandler = eh;
+    }
 
     /**
      * Returns the default handler invoked when a thread abruptly terminates
      * due to an uncaught exception. If the returned value is <tt>null</tt>,
      * there is no default.
-     * @since 1.5
-     * @see #setDefaultUncaughtExceptionHandler
+     *
      * @return the default uncaught exception handler for all threads
+     * @see #setDefaultUncaughtExceptionHandler
+     * @since 1.5
      */
-    public static UncaughtExceptionHandler getDefaultUncaughtExceptionHandler(){
+    public static UncaughtExceptionHandler getDefaultUncaughtExceptionHandler() {
         return defaultUncaughtExceptionHandler;
     }
 
@@ -790,12 +863,13 @@ public class Thread implements Runnable {
      * uncaught exception handler explicitly set then this thread's
      * <tt>ThreadGroup</tt> object is returned, unless this thread
      * has terminated, in which case <tt>null</tt> is returned.
-     * @since 1.5
+     *
      * @return the uncaught exception handler for this thread
+     * @since 1.5
      */
     public UncaughtExceptionHandler getUncaughtExceptionHandler() {
         return uncaughtExceptionHandler != null ?
-            uncaughtExceptionHandler : group;
+                uncaughtExceptionHandler : group;
     }
 
     /**
@@ -805,10 +879,11 @@ public class Thread implements Runnable {
      * exceptions by having its uncaught exception handler explicitly set.
      * If no such handler is set then the thread's <tt>ThreadGroup</tt>
      * object acts as its handler.
+     *
      * @param eh the object to use as this thread's uncaught exception
-     * handler. If <tt>null</tt> then this thread has no explicit handler.
-     * @throws  SecurityException  if the current thread is not allowed to
-     *          modify this thread.
+     *           handler. If <tt>null</tt> then this thread has no explicit handler.
+     * @throws SecurityException if the current thread is not allowed to
+     *                           modify this thread.
      * @see #setDefaultUncaughtExceptionHandler
      * @see ThreadGroup#uncaughtException
      * @since 1.5
@@ -832,10 +907,9 @@ public class Thread implements Runnable {
      */
     static void processQueue(ReferenceQueue<Class<?>> queue,
                              ConcurrentMap<? extends
-                             WeakReference<Class<?>>, ?> map)
-    {
+                                     WeakReference<Class<?>>, ?> map) {
         Reference<? extends Class<?>> ref;
-        while((ref = queue.poll()) != null) {
+        while ((ref = queue.poll()) != null) {
             map.remove(ref);
         }
     }
@@ -879,7 +953,7 @@ public class Thread implements Runnable {
             if (obj instanceof WeakClassKey) {
                 Object referent = get();
                 return (referent != null) &&
-                       (referent == ((WeakClassKey) obj).get());
+                        (referent == ((WeakClassKey) obj).get());
             } else {
                 return false;
             }
@@ -893,23 +967,34 @@ public class Thread implements Runnable {
     // concurrent code, and we can not risk accidental false sharing.
     // Hence, the fields are isolated with @Contended.
 
-    /** The current seed for a ThreadLocalRandom */
+    /**
+     * The current seed for a ThreadLocalRandom
+     */
     @sun.misc.Contended("tlr")
     long threadLocalRandomSeed;
 
-    /** Probe hash value; nonzero if threadLocalRandomSeed initialized */
+    /**
+     * Probe hash value; nonzero if threadLocalRandomSeed initialized
+     */
     @sun.misc.Contended("tlr")
     int threadLocalRandomProbe;
 
-    /** Secondary seed isolated from public ThreadLocalRandom sequence */
+    /**
+     * Secondary seed isolated from public ThreadLocalRandom sequence
+     */
     @sun.misc.Contended("tlr")
     int threadLocalRandomSecondarySeed;
 
     /* Some private helper methods */
     private native void setPriority0(int newPriority);
+
     private native void stop0(Object o);
+
     private native void suspend0();
+
     private native void resume0();
+
     private native void interrupt0();
+
     private native void setNativeName(String name);
 }

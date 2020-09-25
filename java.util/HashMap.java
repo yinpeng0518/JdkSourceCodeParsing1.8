@@ -1761,9 +1761,6 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
     /* ------------------------------------------------------------ */
     // Tree bins
 
-    //转化为红黑树的节点类
-
-
     /**
      * TreeNode具备红黑树的性质，但又有异于红黑树，由于两种存储形式的存在，插入或删除都要实现两部分的逻辑以及进行当前存储形式的判断
      * 链栈: prev + next实现，节点数<7
@@ -1780,9 +1777,7 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
             super(hash, key, val, next);
         }
 
-        /**
-         * Returns root of tree containing this node.
-         */
+        //寻找根节点
         final TreeNode<K, V> root() {
             for (TreeNode<K, V> r = this, p; ; ) {
                 if ((p = r.parent) == null)
@@ -2157,19 +2152,40 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
         /* ------------------------------------------------------------ */
         // Red-black tree methods, all adapted from CLR
 
-        //左旋
+
+        /***
+         *  左旋: 将旋转点的右节点变成其父节点
+         *
+         *        pp                     pp
+         *       /                      /
+         *      p                      r
+         *     /  \                   / \
+         *    pl    r       ==>      p   rr
+         *         / \              / \
+         *        rl  rr           pl  rl
+         */
         static <K, V> TreeNode<K, V> rotateLeft(TreeNode<K, V> root, TreeNode<K, V> p) {
             TreeNode<K, V> r, pp, rl;
+            //左旋的前提条件:旋转节点和它的右节点不能为null
             if (p != null && (r = p.right) != null) {
+                //将p的右孩子指向r的左节点rl
                 if ((rl = p.right = r.left) != null)
+                    //如果rl存在，则将rl的父节点指向p
                     rl.parent = p;
+                //将r的父节点指向p的父节点 也就是pp
                 if ((pp = r.parent = p.parent) == null)
-                    (root = r).red = false;
+                    //如果此时 r的父节点为null,说明此时r就是根节点(只有根节点才不会有父节点)
+                    (root = r).red = false; //根节点为黑色
+                    //进这个if块，说明pp不为null,此时要分两种情况：1.p是pp左节点；2.p是pp的右节点
                 else if (pp.left == p)
+                    //这是第一种情况，p是pp左节点，这是就是将pp的左节点指向r
                     pp.left = r;
                 else
+                    //这是第二种情况，p是pp右节点，这是就是将pp的右节点指向r
                     pp.right = r;
+                //r的左节点指向p
                 r.left = p;
+                //p的父节点指向r
                 p.parent = r;
             }
             return root;

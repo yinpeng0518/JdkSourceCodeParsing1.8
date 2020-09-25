@@ -127,9 +127,9 @@ public abstract class AbstractQueuedSynchronizer extends AbstractOwnableSynchron
      * 线程抢锁失败后，封装成node加入队列:
      * 1.队列有tail，可直接入队。入队时，通过CAS将node置为tail。CAS操作失败，说明被其它线程抢先入队了，node需要通过enq()方法入队。
      * 2.队列没有tail，说明队列是空的，node通过enq()方法入队，enq()会初始化head和tail。
-     *
+     * <p>
      * addWaiter方法就是让nc入队-并且维护队列的链表关系，但是由于情况复杂做了不同处理
-     *  主要针对队列是否有初始化，没有初始化则new一个新的Node nn作为对首，nn里面的线程为null
+     * 主要针对队列是否有初始化，没有初始化则new一个新的Node nn作为对首，nn里面的线程为null
      */
     private Node addWaiter(Node mode) {
         // 线程抢锁失败后，封装成node加入队列
@@ -162,12 +162,10 @@ public abstract class AbstractQueuedSynchronizer extends AbstractOwnableSynchron
         if (ws < 0)
             compareAndSetWaitStatus(node, ws, 0);
 
-        Node s = node.next;  // 正常情况，s就是head.next节点
+        Node s = node.next; //head的下一个节点
 
-        /*
-         * 有可能head.next取消了等待（waitStatus==1）
-         * 那么就从队尾往前找，找到waitStatus<=0的所有节点中排在最前面的去唤醒
-         */
+        //有可能head.next取消了等待（waitStatus==1）
+        //那么就从队尾往前找，找到waitStatus<=0的所有节点中排在最前面的去唤醒
         if (s == null || s.waitStatus > 0) {
             s = null;
             for (Node t = tail; t != null && t != node; t = t.prev)
@@ -738,16 +736,7 @@ public abstract class AbstractQueuedSynchronizer extends AbstractOwnableSynchron
         return firstThread;
     }
 
-    /**
-     * Returns true if the given thread is currently queued.
-     *
-     * <p>This implementation traverses the queue to determine
-     * presence of the given thread.
-     *
-     * @param thread the thread
-     * @return {@code true} if the given thread is on the queue
-     * @throws NullPointerException if the thread is null
-     */
+    //如果给定线程当前在队列中，则返回true。 此实现将遍历队列以确定给定线程的存在。
     public final boolean isQueued(Thread thread) {
         if (thread == null)
             throw new NullPointerException();
@@ -1082,48 +1071,22 @@ public abstract class AbstractQueuedSynchronizer extends AbstractOwnableSynchron
         return condition.getWaitingThreads();
     }
 
-    /**
-     * Condition implementation for a {@link
-     * AbstractQueuedSynchronizer} serving as the basis of a {@link
-     * Lock} implementation.
-     *
-     * <p>Method documentation for this class describes mechanics,
-     * not behavioral specifications from the point of view of Lock
-     * and Condition users. Exported versions of this class will in
-     * general need to be accompanied by documentation describing
-     * condition semantics that rely on those of the associated
-     * {@code AbstractQueuedSynchronizer}.
-     *
-     * <p>This class is Serializable, but all fields are transient,
-     * so deserialized conditions have no waiters.
-     */
+
     public class ConditionObject implements Condition, java.io.Serializable {
         private static final long serialVersionUID = 1173984872572414699L;
-        /**
-         * First node of condition queue.
-         */
+
+        //条件队列的第一个节点
         private transient Node firstWaiter;
-        /**
-         * Last node of condition queue.
-         */
+        //条件队列的最后一个节点
         private transient Node lastWaiter;
 
-        /**
-         * Creates a new {@code ConditionObject} instance.
-         */
         public ConditionObject() {
         }
 
-        // Internal methods
-
-        /**
-         * Adds a new waiter to wait queue.
-         *
-         * @return its new wait node
-         */
+        //增加一个新的waiter到等待队列
         private Node addConditionWaiter() {
             Node t = lastWaiter;
-            // If lastWaiter is cancelled, clean out.
+
             if (t != null && t.waitStatus != Node.CONDITION) {
                 unlinkCancelledWaiters();
                 t = lastWaiter;
@@ -1169,18 +1132,8 @@ public abstract class AbstractQueuedSynchronizer extends AbstractOwnableSynchron
         }
 
         /**
-         * Unlinks cancelled waiter nodes from condition queue.
-         * Called only while holding lock. This is called when
-         * cancellation occurred during condition wait, and upon
-         * insertion of a new waiter when lastWaiter is seen to have
-         * been cancelled. This method is needed to avoid garbage
-         * retention in the absence of signals. So even though it may
-         * require a full traversal, it comes into play only when
-         * timeouts or cancellations occur in the absence of
-         * signals. It traverses all nodes rather than stopping at a
-         * particular target to unlink all pointers to garbage nodes
-         * without requiring many re-traversals during cancellation
-         * storms.
+         * 从条件队列中解除已取消的waiter节点的链接。仅在持有锁时调用。
+         * 当在条件等待期间取消发生时，以及当看到lastWaiter已被取消时插入一个waiter时，都会调用此函数。
          */
         private void unlinkCancelledWaiters() {
             Node t = firstWaiter;

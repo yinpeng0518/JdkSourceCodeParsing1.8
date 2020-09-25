@@ -1762,6 +1762,13 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
     // Tree bins
 
     /**
+     * 红黑树介绍:
+     * 1.节点是红色或黑色
+     * 2.根节点是黑色
+     * 3.每个叶子节点都是黑色的空节点(NIL节点）
+     * 4 父子不能同为红色
+     * 5.从任一节点到其每个叶子的所有路径都包含相同数目的黑色节点
+     *
      * TreeNode具备红黑树的性质，但又有异于红黑树，由于两种存储形式的存在，插入或删除都要实现两部分的逻辑以及进行当前存储形式的判断
      * 链栈: prev + next实现，节点数<7
      * 树: parent + left + right实现

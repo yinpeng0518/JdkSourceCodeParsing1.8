@@ -415,11 +415,7 @@ public abstract class AbstractQueuedSynchronizer extends AbstractOwnableSynchron
         }
     }
 
-    /**
-     * Acquires in shared uninterruptible mode.
-     *
-     * @param arg the acquire argument
-     */
+    //在共享不可中断模式下获取锁
     private void doAcquireShared(int arg) {
         final Node node = addWaiter(Node.SHARED);
         boolean failed = true;
@@ -694,27 +690,19 @@ public abstract class AbstractQueuedSynchronizer extends AbstractOwnableSynchron
         return false;
     }
 
-    /**
-     * Returns {@code true} if the apparent first queued thread, if one
-     * exists, is waiting in exclusive mode.  If this method returns
-     * {@code true}, and the current thread is attempting to acquire in
-     * shared mode (that is, this method is invoked from {@link
-     * #tryAcquireShared}) then it is guaranteed that the current thread
-     * is not the first queued thread.  Used only as a heuristic in
-     * ReentrantReadWriteLock.
-     */
+    //队列中第一个等锁的线程请求的是不是写锁
     final boolean apparentlyFirstQueuedIsExclusive() {
         Node h, s;
         return (h = head) != null &&
                 (s = h.next) != null &&
-                !s.isShared() &&
+                !s.isShared() &&   //head后继节点线程请求写锁
                 s.thread != null;
     }
 
     /**
      * {@link "https://blog.csdn.net/wenzhouxiaomayi77/article/details/104682122"}
+     * 判断同步队列中是否有排队等待的线程
      *
-     * 判断是否需要排队
      * 整个方法如果最后返回false，说明没有排队的node,则去加锁，如果返回true，说明有排队的node。
      */
     public final boolean hasQueuedPredecessors() {

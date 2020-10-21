@@ -10,6 +10,12 @@ import sun.misc.Unsafe;
 /**
  * {@link "https://mp.weixin.qq.com/s/HrLtyZq0czr51Ijqe6gYvw"}
  *
+ * 大多数业务场景，都是读多写少的，采用互斥锁性能较差，所以提供了读写锁。
+ * 读写锁允许共享资源在同一时刻可以被多个读线程访问，但是在写线程访问时，所有的读线程和其他的写线程都会被阻塞。
+ * 一个ReentrantReadWriteLock对象都对应着读锁和写锁两个锁，而这两个锁是通过同一个sync（AQS）实现的。
+ * 读写锁采用“按位切割使用”的方式，将state这个int变量分为高16位和低16位，高16位记录读锁状态，低16位记录写锁状态。
+ * 读锁获取时，需要判断当时的写锁没有被其他线程占用即可，锁处于的其他状态都可以获取读锁。
+ *
  * @author Doug Lea
  * @since 1.5
  */
@@ -176,48 +182,42 @@ public abstract class AbstractQueuedSynchronizer extends AbstractOwnableSynchron
             LockSupport.unpark(s.thread);  // 唤醒s节点的线程去抢锁
     }
 
-    /**
-     * Release action for shared mode -- signals successor and ensures
-     * propagation. (Note: For exclusive mode, release just amounts
-     * to calling unparkSuccessor of head if it needs signal.)
-     */
+    //唤醒之后获取写锁的线程
     private void doReleaseShared() {
-        /*
-         * Ensure that a release propagates, even if there are other
-         * in-progress acquires/releases.  This proceeds in the usual
-         * way of trying to unparkSuccessor of head if it needs
-         * signal. But if it does not, status is set to PROPAGATE to
-         * ensure that upon release, propagation continues.
-         * Additionally, we must loop in case a new node is added
-         * while we are doing this. Also, unlike other uses of
-         * unparkSuccessor, we need to know if CAS to reset status
-         * fails, if so rechecking.
-         */
         for (; ; ) {
             Node h = head;
             if (h != null && h != tail) {
                 int ws = h.waitStatus;
                 if (ws == Node.SIGNAL) {
                     if (!compareAndSetWaitStatus(h, Node.SIGNAL, 0))
-                        continue;            // loop to recheck cases
+                        continue;
                     unparkSuccessor(h);
                 } else if (ws == 0 &&
                         !compareAndSetWaitStatus(h, 0, Node.PROPAGATE))
-                    continue;                // loop on failed CAS
+                    continue;
             }
-            if (h == head)                   // loop if head changed
+            if (h == head)
                 break;
         }
     }
 
-    private void setHeadAndPropagate(Node node, int propagate) {
+    /**
+     * setHeadAndPropagate()方法就是在一个线程获取读锁之后，唤醒它之后排队获取读锁的线程的。
+     * 该方法可以保证线程1获取读锁后，唤醒线程2获取读锁，线程2获取读锁后，唤醒线程3获取读锁，直到遇到后继节点是要获取写锁时才结束
+     */
+    private void setHeadAndPropagate(Node node,  //node所代表的线程一定是当前执行的线程
+                                     int propagate) { //propagate则代表tryAcquireShared的返回值(propagate必定为>=0)
         Node h = head;
-        setHead(node);
-        if (propagate > 0 || h == null || h.waitStatus < 0 ||
-                (h = head) == null || h.waitStatus < 0) {
+        setHead(node); // 因为node获取到锁了，所以设置node为head
+        if (propagate > 0  //如果propagate > 0成立的话，说明还有剩余共享锁可以获取，那么短路后面条件
+                || h == null
+                || h.waitStatus < 0
+                || (h = head) == null
+                || h.waitStatus < 0) {
+
             Node s = node.next;
-            if (s == null || s.isShared())
-                doReleaseShared();
+            if (s == null || s.isShared()) // node后继节点线程要获取读锁，此时node就是head
+                doReleaseShared(); // 唤醒head后继节点（也就是node.next）获取锁
         }
     }
 
@@ -281,7 +281,7 @@ public abstract class AbstractQueuedSynchronizer extends AbstractOwnableSynchron
         if (ws == Node.SIGNAL)
             return true;
         if (ws > 0) { // 1
-            /*
+            /**
              * waitStatus>0 ，表示节点取消了排队
              * 这里检测一下，将不需要排队的线程从队列中删除（因为同步队列中保存的是等锁的线程）
              * 为node找一个waitStatus<=0的前置节点pred
@@ -415,19 +415,19 @@ public abstract class AbstractQueuedSynchronizer extends AbstractOwnableSynchron
         }
     }
 
-    //在共享不可中断模式下获取锁
+    //获取共享锁
     private void doAcquireShared(int arg) {
-        final Node node = addWaiter(Node.SHARED);
+        final Node node = addWaiter(Node.SHARED); //共享模式
         boolean failed = true;
         try {
             boolean interrupted = false;
             for (; ; ) {
                 final Node p = node.predecessor();
-                if (p == head) {
-                    int r = tryAcquireShared(arg);
-                    if (r >= 0) {
+                if (p == head) { //前驱节点是head，node才能去抢锁
+                    int r = tryAcquireShared(arg); //尝试获取读锁，获取到锁返回1，获取不到返回-1
+                    if (r >= 0) { // r>0表示抢锁成功
                         setHeadAndPropagate(node, r);
-                        p.next = null; // help GC
+                        p.next = null;  // help GC
                         if (interrupted)
                             selfInterrupt();
                         failed = false;
@@ -602,12 +602,10 @@ public abstract class AbstractQueuedSynchronizer extends AbstractOwnableSynchron
         return false;
     }
 
-    /**
-     * 共享式获取同步状态，与独占式的区别在于同一时刻有多个线程获取同步状态
-     */
+    //获取读锁
     public final void acquireShared(int arg) {
         if (tryAcquireShared(arg) < 0)
-            doAcquireShared(arg);
+            doAcquireShared(arg); //尝试获取读锁，获取到锁返回1，获取不到返回-1。
     }
 
     /**
@@ -632,11 +630,13 @@ public abstract class AbstractQueuedSynchronizer extends AbstractOwnableSynchron
                 doAcquireSharedNanos(arg, nanosTimeout);
     }
 
-    /**
-     * 共享式释放同步状态
-     */
+    //读锁释放
     public final boolean releaseShared(int arg) {
         if (tryReleaseShared(arg)) {
+            /**
+             * 到这里，说明已经没有任何线程占用锁，调用doReleaseShared()唤醒之后获取写锁的线程
+             * 如果同步队列中还有线程在排队，head后继节点的线程一定是要获取写锁，因为线程持有读锁时会把它之后要获取读锁的线程全部唤醒
+             */
             doReleaseShared();
             return true;
         }

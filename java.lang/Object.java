@@ -67,6 +67,7 @@ public class Object {
 
     //使当前线程等待，直到另一个线程在对象上调用notify方法或notifyAll方法唤醒等待线程，可以等待指定的时间，在等待过程中可以被中断，这里抛出InterruptedException异常
     public final native void wait(long timeout) throws InterruptedException;
+
     public final void wait(long timeout, int nanos) throws InterruptedException {
         if (timeout < 0) {
             throw new IllegalArgumentException("timeout value is negative");
@@ -83,6 +84,7 @@ public class Object {
 
         wait(timeout);
     }
+
     public final void wait() throws InterruptedException {
         wait(0);
     }

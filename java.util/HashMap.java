@@ -14,6 +14,7 @@ import jdk.internal.access.SharedSecrets;
 
 /**
  * {@link "https://blog.csdn.net/lylzdd/article/details/86536424"}
+ * {@link "https://www.gclearning.cn/views/JDK%E6%BA%90%E7%A0%81%E9%82%A3%E4%BA%9B%E4%BA%8B%E5%84%BF/2019/030519.html"}
  *
  * 2357
  *
@@ -33,19 +34,26 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
     @java.io.Serial
     private static final long serialVersionUID = 362498820763181265L;
 
-    //默认的初始容量为2^4 = 16，这个值必须是2的次方
+    //Node数组的默认长度，16，这个值必须是2的次方
     static final int DEFAULT_INITIAL_CAPACITY = 1 << 4;
 
-    //最大容量2^30 = 1073741824。这个值必须是一个小于它的2的次方数
+    //Node数组的最大长度，最大扩容长度
     static final int MAXIMUM_CAPACITY = 1 << 30;
 
-    //默认加载因子0.75
+    /**
+     * 默认负载因子:
+     * 负载因子是哈希表在自动扩容之前能承受容量的一种尺度。
+     * 当哈希表的数目超出了负载因子与当前容量的乘积时，则要对该哈希表进行rehash操作（扩容操作）。
+     */
     static final float DEFAULT_LOAD_FACTOR = 0.75f;
 
-    //当链表的值超过8则会转红黑树(1.8新增)，需要注意的是是否转化还有一个参数要考虑（MIN_TREEIFY_CAPACITY）.
+    /**
+     * 链表转换为树的阈值，超过这个长度的链表会被转换为红黑树，
+     * 当然，不止这一个条件，在下面的源码部分会看到。
+     */
     static final int TREEIFY_THRESHOLD = 8;
 
-    //当链表的值小于6则会从红黑树转回链表
+    //当进行resize操作时，小于这个长度的树会被转换为链表
     static final int UNTREEIFY_THRESHOLD = 6;
 
     /**
@@ -54,7 +62,7 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
      */
     static final int MIN_TREEIFY_CAPACITY = 64;
 
-    //没有树化的时候基础的hash bin节点，也就是数组里面存的节点，在一个数组元素内组成链表的节点。
+    //没有树化的时候基础节点，也就是数组里面存的节点，在一个数组元素内组成链表的节点。
     static class Node<K, V> implements Map.Entry<K, V> {
         final int hash;   //哈希值，HashMap根据该值确定记录的位置
         final K key;
@@ -186,19 +194,24 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
 
     /* ---------------- Fields -------------- */
 
-    //hashmap中的数组，长度必须为2的幂,惰性初始化。
+    //hashmap中的数组，长度必须为2的幂,惰性初始化(第一次使用的时候进行初始化，put操作才会初始化对象,调用构造函数时不会初始化)
     transient Node<K, V>[] table;
 
-    //用来存放缓存
+    //entrySet保存key和value 用于迭代
     transient Set<Map.Entry<K, V>> entrySet;
 
-    //hashmap中的键值对的个数
+    //存放元素的个数，但不等于数组的长度
     transient int size;
 
-    //HashMap被结构性修改的次数，用于fail-fast机制
+    /**
+     * 计数器，fail-fast机制相关
+     * 你可以当成一个在高并发读写操作时的判断，举个例子：
+     * 一个线程A迭代遍历a,modCount=expectedModCount值为1，执行过程中，一个线程B修改了a,modCount=2，线程A在遍历时判断了modCount<>expectedModCount,抛错
+     * 当然，这个只是简单的检查，并不能得到保证
+     */
     transient int modCount;
 
-    //用来调整大小下一个容量的值计算方式为(容量*负载因子)
+    //阈值，当实际大小超过阈值（容量*负载因子）的时候，会进行扩容
     int threshold;
 
     //哈希表的加载因子
@@ -218,6 +231,7 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
         if (loadFactor <= 0 || Float.isNaN(loadFactor))
             throw new IllegalArgumentException("Illegal load factor: " + loadFactor);
         this.loadFactor = loadFactor;
+        //根据初始容量设置阈值
         this.threshold = tableSizeFor(initialCapacity);
     }
 
@@ -245,20 +259,17 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
         int s = m.size();
         //传入map的大小不为0，
         if (s > 0) {
-            // 说明是拷贝构造函数来调用的putMapEntries，或者构造后还没放过任何元素
+            //判断table是否已经被初始化
             if (table == null) {
-                //先不考虑容量必须为2的幂，那么下面括号里会算出来一个容量，使得size刚好不大于阈值。
-                //但这样会算出小数来，但作为容量就必须向上取整，所以这里要加1
+                //未被初始化，判断m中元素的个数放入当前map中是否会超出最大容量的阈值
                 float ft = ((float) s / loadFactor) + 1.0F;
-                //如果小于最大容量，就进行截断；否则就赋值为最大容量
                 int t = ((ft < (float) MAXIMUM_CAPACITY) ? (int) ft : MAXIMUM_CAPACITY);
-                //只有在算出来的容量t > 当前暂存的容量(容量可能会暂放到阈值上的)时，才会用t计算出新容量，再暂时放到阈值上
+                //计算得到的t大于阈值 重新设置阈值
                 if (t > threshold)
                     threshold = tableSizeFor(t);
-                //说明table已经初始化过了；判断传入map的size是否大于当前map的threshold，如果是，必须要resize
-                //这种情况属于预先扩大容量，再put元素
             } else {
                 while (s > threshold && table.length < MAXIMUM_CAPACITY)
+                    //当前map已经初始化，并且添加的元素长度大于阈值，需要进行扩容操作
                     resize();
             }
             //循环里的putVal可能也会触发resize
@@ -343,12 +354,15 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
      * 2. ++size，普通变量 size 没有可见性保证，++操作也没有保证原子性，这个计算在多线程环境下一定是有问题的.
      * 3. 在一个线程 put()过程中，可能有其他线程有 put 和 remove，导致当前线程 put 失败。
      */
-    final V putVal(int hash, K key, V value, boolean onlyIfAbsent, boolean evict) {
-        Node<K, V>[] tab;
+    final V putVal(int hash, K key, V value, boolean onlyIfAbsent, //是否覆盖原有值，true,不覆盖原有值
+                   boolean evict) {  //LinkedHashMap实现afterNodeInsertion方法时调用，这里相当于占位符的作用
+        Node<K, V>[] tab; //Node数组
         Node<K, V> p;
-        int n, i;
+        int n,  //数组容量
+        int i;
         //如果数组为null或者容量为0，就进行resize()扩容
         if ((tab = table) == null || (n = tab.length) == 0)
+            //这里也说明了第一次初始化是在这里，而不是使用构造方法，排除putMapEntries方式
             n = (tab = resize()).length;
         //通过i = (n - 1) & hash计算数组下标
         if ((p = tab[i = (n - 1) & hash]) == null)
@@ -362,8 +376,8 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
             if (p.hash == hash && ((k = p.key) == key || (key != null && key.equals(k))))
                 e = p;
                 // hash值对应位置结点为TreeNode，调用红黑树的插值方法
-            else if (p instanceof TreeNode)
-                e = ((TreeNode<K, V>) p).putTreeVal(this, tab, hash, key, value);
+            else if (p instanceof TreeNode) e = ((TreeNode<K, V>) p).putTreeVal(this, tab, hash, key, value);
+
                 // hash值对应位置结点为Node，将数据插入链表
             else {
                 for (int binCount = 0; ; ++binCount) {
@@ -413,48 +427,64 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
      * 3.4 当前是链表, JAVA7时还需要重新计算hash位, 但是JAVA8做了优化, 通过(e.hash & oldCap) == 0来判断是否需要移位; 如果为真则在原位不动, 否则则需要移动到当前hash槽位 + oldCap的位置;
      */
     final Node<K, V>[] resize() {
-        Node<K, V>[] oldTab = table;                        //旧的数组
-        int oldCap = (oldTab == null) ? 0 : oldTab.length;  //旧的容量
-        int oldThr = threshold;                             //旧的阈值
-        int newCap = 0;                                     //新的容量
-        int newThr = 0;                                     //新的阈值
+        Node<K, V>[] oldTab = table;                        //保存扩容前的Node数组
+        int oldCap = (oldTab == null) ? 0 : oldTab.length;  //扩容前的Node数组的容量大小
+        int oldThr = threshold;                             //扩容前的阈值
+        int newCap = 0;                                     //扩容后的数组容量（长度）
+        int newThr = 0;                                     //扩容后的阈值
 
-        // 只有非第一次扩容才会进来（第一次扩容在第一次put），就将新容量和新阈值都变成原来的两倍，或者旧容量就已经大于等于最大值的情况下就不变，直接返回。
+        //扩容前的数组不为空
         if (oldCap > 0) {
-            // oldCap最大为MAXIMUM_CAPACITY(2^30)
+            //扩容前的Node数组容量大于等于设置的最大容量，不会进行扩容，阈值设置为Integer.MAX_VALUE
             if (oldCap >= MAXIMUM_CAPACITY) {
-                //threshold变成MAX_VALUE(2^31-1),随它们碰撞。但是oldCap不改变,因为如果oldCap翻倍就为负数了,
                 threshold = Integer.MAX_VALUE;
                 return oldTab;
-                // 将数组大小扩大一倍
-            } else if ((newCap = oldCap << 1) < MAXIMUM_CAPACITY && oldCap >= DEFAULT_INITIAL_CAPACITY)
-                // 将阈值扩大一倍
+                // 如果扩容前的数组容量扩大为2倍依然没有超过最大容量，
+                // 并且扩容前的Node数组容量大于等于数组的默认容量，
+                // 扩容后的数组容量值为扩容前的map的容量的2倍，并且扩容后的阈值同样设置为扩容前的两倍,
+                // 反之，则只设置扩容后的容量值为扩容前的map的容量的2倍
+                // 这里newCap已经在条件里赋值了
+            } else if ((newCap = oldCap << 1) < MAXIMUM_CAPACITY
+                    && oldCap >= DEFAULT_INITIAL_CAPACITY)
                 newThr = oldThr << 1;
-            // 对应使用 new HashMap(int initialCapacity) 初始化后，第一次 put 的时候
+            // 扩容前的数组未初始化并且使用了有参构造函数构造
+            // 这里在oldCap = 0时执行，这里oldThr > 0说明初始化时是有参初始化构造的map
+            // 自己可以试下无参构造函数，threshold的值为0
         } else if (oldThr > 0)
             newCap = oldThr;
-            // 对应使用 new HashMap() 初始化后，第一次 put 的时候
+            //扩容前的数组未初始化并且使用了无参构造函数构造,对应使用new HashMap()初始化后，第一次put的时候
         else {
-            newCap = DEFAULT_INITIAL_CAPACITY;
-            newThr = (int) (DEFAULT_LOAD_FACTOR * DEFAULT_INITIAL_CAPACITY);
+            newCap = DEFAULT_INITIAL_CAPACITY; //扩容后的容量 = 默认容量
+            newThr = (int) (DEFAULT_LOAD_FACTOR * DEFAULT_INITIAL_CAPACITY); //扩容后的阈值 = 默认容量 * 负载因子
         }
+
+        /**
+         * 上边设置了新容量和新的阈值，执行到这里，你应该发现只有newThr可能没被赋值，所以这里要继续进行一个操作，来对newThr进行赋值
+         * 两种情况：
+         * 1.扩容前的node数组容量有值且扩容后容量超过最大值或者原node数组容量小于默认初始容量16
+         * 2.使用有参构造函数，第一次put操作时上边代码里没有设置newThr
+         */
         if (newThr == 0) {
+            //应该得到的新阈值ft = 新容量 * 负载因子
             float ft = (float) newCap * loadFactor;
+            //假如新容量小于最大容量并且ft小于最大容量则新的阈值设置为ft,否则设置成int最大值
             newThr = (newCap < MAXIMUM_CAPACITY && ft < (float) MAXIMUM_CAPACITY ?
                     (int) ft : Integer.MAX_VALUE);
         }
+        //执行到这，扩容后的容量和阈值都计算完毕,阈值设置为新阈值
         threshold = newThr;
-        // 用新的数组大小初始化新的数组
+        //创建扩容后的Node数组
         @SuppressWarnings({"rawtypes", "unchecked"})
         Node<K, V>[] newTab = (Node<K, V>[]) new Node[newCap];
-        // 如果是初始化数组，到这里就结束了，返回 newTab 即可
-        table = newTab;
+        //如果是初始化数组，到这里就结束了，返回newTab即可
+        table = newTab; //切换为扩容后的Node数组，此时还未进行将旧数组拷贝到新数组
         if (oldTab != null) {
-            // 开始遍历原数组，进行数据迁移。
+            //原有数组不为空，将原有数组数据拷贝到新数组中
             for (int j = 0; j < oldCap; ++j) {
                 Node<K, V> e;
+                //非空元素才进行赋值
                 if ((e = oldTab[j]) != null) {
-                    oldTab[j] = null;
+                    oldTab[j] = null;  //原有数值引用置空，方便GC
                     //如果该数组位置上只有单个元素，直接迁移这个元素
                     if (e.next == null)
                         newTab[e.hash & (newCap - 1)] = e;
@@ -532,14 +562,6 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
         }
     }
 
-    /**
-     * Copies all of the mappings from the specified map to this map.
-     * These mappings will replace any mappings that this map had for
-     * any of the keys currently in the specified map.
-     *
-     * @param m mappings to be stored in this map
-     * @throws NullPointerException if the specified map is null
-     */
     public void putAll(Map<? extends K, ? extends V> m) {
         putMapEntries(m, true);
     }
@@ -1259,12 +1281,7 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
     /* ------------------------------------------------------------ */
     // Cloning and serialization
 
-    /**
-     * Returns a shallow copy of this {@code HashMap} instance: the keys and
-     * values themselves are not cloned.
-     *
-     * @return a shallow copy of this map
-     */
+    //返回这个HashMap实例的浅拷贝:键和值本身不会被克隆。
     @SuppressWarnings("unchecked")
     @Override
     public Object clone() {
@@ -1280,51 +1297,31 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
         return result;
     }
 
-    // These methods are also used when serializing HashSets
+    //加载因子
     final float loadFactor() {
         return loadFactor;
     }
 
+    //map的容量
     final int capacity() {
         return (table != null) ? table.length :
                 (threshold > 0) ? threshold :
                         DEFAULT_INITIAL_CAPACITY;
     }
 
-    /**
-     * Saves this map to a stream (that is, serializes it).
-     *
-     * @param s the stream
-     * @throws IOException if an I/O error occurs
-     * @serialData The <i>capacity</i> of the HashMap (the length of the
-     * bucket array) is emitted (int), followed by the
-     * <i>size</i> (an int, the number of key-value
-     * mappings), followed by the key (Object) and value (Object)
-     * for each key-value mapping.  The key-value mappings are
-     * emitted in no particular order.
-     */
+    //将此Map保存到流(即序列化它)
     @java.io.Serial
-    private void writeObject(java.io.ObjectOutputStream s)
-            throws IOException {
-        int buckets = capacity();
-        // Write out the threshold, loadfactor, and any hidden stuff
+    private void writeObject(java.io.ObjectOutputStream s) throws IOException {
+        int buckets = capacity();  //map的容量
         s.defaultWriteObject();
         s.writeInt(buckets);
         s.writeInt(size);
         internalWriteEntries(s);
     }
 
-    /**
-     * Reconstitutes this map from a stream (that is, deserializes it).
-     *
-     * @param s the stream
-     * @throws ClassNotFoundException if the class of a serialized object
-     *                                could not be found
-     * @throws IOException            if an I/O error occurs
-     */
+    //从流重新构造此Map(即对其进行反序列化)
     @java.io.Serial
-    private void readObject(java.io.ObjectInputStream s)
-            throws IOException, ClassNotFoundException {
+    private void readObject(java.io.ObjectInputStream s) throws IOException, ClassNotFoundException {
         // Read in the threshold (ignored), loadfactor, and any hidden stuff
         s.defaultReadObject();
         reinitialize();
@@ -1334,8 +1331,7 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
         s.readInt();                // Read and ignore number of buckets
         int mappings = s.readInt(); // Read number of mappings (size)
         if (mappings < 0)
-            throw new InvalidObjectException("Illegal mappings count: " +
-                    mappings);
+            throw new InvalidObjectException("Illegal mappings count: " + mappings);
         else if (mappings > 0) { // (if zero, use defaults)
             // Size the table using given load factor only if within
             // range of 0.25...4.0
@@ -1722,9 +1718,7 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
         return new TreeNode<>(p.hash, p.key, p.value, next);
     }
 
-    /**
-     * Reset to initial default state.  Called by clone and readObject.
-     */
+    //重置到初始默认状态。由克隆和readObject调用
     void reinitialize() {
         table = null;
         entrySet = null;
@@ -1745,7 +1739,7 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
     void afterNodeRemoval(Node<K, V> p) {
     }
 
-    // Called only from writeObject, to ensure compatible ordering.
+    //仅从writeObject调用，以确保兼容顺序
     void internalWriteEntries(java.io.ObjectOutputStream s) throws IOException {
         Node<K, V>[] tab;
         if (size > 0 && (tab = table) != null) {
@@ -1762,6 +1756,10 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
     // Tree bins
 
     /**
+     * {@link "https://www.gclearning.cn/views/JDK%E6%BA%90%E7%A0%81%E9%82%A3%E4%BA%9B%E4%BA%8B%E5%84%BF/2019/040511.html"}
+     * {@link "https://zh.wikipedia.org/wiki/红黑树"}
+     * {@link "https://en.wikipedia.org/wiki/Red–black_tree"}
+     *
      * 红黑树介绍:
      * 1.节点是红色或黑色
      * 2.根节点是黑色
@@ -1774,17 +1772,18 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
      * 树: parent + left + right实现
      */
     static final class TreeNode<K, V> extends LinkedHashMap.Entry<K, V> {
-        TreeNode<K, V> parent;
-        TreeNode<K, V> left;
-        TreeNode<K, V> right;
-        TreeNode<K, V> prev;
-        boolean red;    // 记录树节点颜色
+        TreeNode<K, V> parent;  //父节点
+        TreeNode<K, V> left;    //左子节点
+        TreeNode<K, V> right;   //右子节点
+        TreeNode<K, V> prev;    //前驱节点
+        boolean red;            //是否是红色节点
 
+        //构造方法直接调用的父类方法,最终还是HashMap.Node的构造方法
         TreeNode(int hash, K key, V val, Node<K, V> next) {
             super(hash, key, val, next);
         }
 
-        //寻找根节点
+        //返回根节点TreeNode,实现上非常简单，不断向上遍历，找到父节点为空的节点即为根节点
         final TreeNode<K, V> root() {
             for (TreeNode<K, V> r = this, p; ; ) {
                 if ((p = r.parent) == null)
@@ -1794,55 +1793,67 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
         }
 
         /**
-         * Ensures that the given root is the first node of its bin.
+         * 确保根节点是bin桶（数组tab的其中一个元素）中的第一个节点,如果不是，则进行操作，将根节点放到tab数组上，
+         * 这个跟HashMap结构有关，数组（链表+红黑树），在进行树化，结构调整时，根节点可能会变化，
+         * 原有数组tab对应索引指向的树节点需要进行改变，指向新的根节点,这里注意下，移动时不是修改红黑树是修改的链表结构，prev和next属性
          */
         static <K, V> void moveRootToFront(Node<K, V>[] tab, TreeNode<K, V> root) {
-            int n;
+            int n; //数组的长度
             if (root != null && tab != null && (n = tab.length) > 0) {
-                int index = (n - 1) & root.hash;
-                TreeNode<K, V> first = (TreeNode<K, V>) tab[index];
-                if (root != first) {
-                    Node<K, V> rn;
-                    tab[index] = root;
-                    TreeNode<K, V> rp = root.prev;
+                int index = (n - 1) & root.hash;  //找到当前树所在的bin桶位置（即数组tab的位置）
+                TreeNode<K, V> first = (TreeNode<K, V>) tab[index];  //将tab[index]的树节点记录下来为first
+                if (root != first) {  //root没有落在tab数组上，修改为root在tab数组上
+                    Node<K, V> rn; //rn为root的后继节点
+                    tab[index] = root; //这里即替换掉tab[index]指向的原有节点，可以理解成现在指向root节点
+                    TreeNode<K, V> rp = root.prev;  //rp为root的前驱节点
                     if ((rn = root.next) != null)
-                        ((TreeNode<K, V>) rn).prev = rp;
+                        ((TreeNode<K, V>) rn).prev = rp;  //将root前后节点关联
                     if (rp != null)
                         rp.next = rn;
+                    //first和root节点进行关联，first的前一个节点为root
                     if (first != null)
                         first.prev = root;
+                    // 修改root的链表属性
                     root.next = first;
                     root.prev = null;
                 }
+                //检查红黑树一致性
                 assert checkInvariants(root);
             }
         }
 
-        /**
-         * Finds the node starting at root p with the given hash and key.
-         * The kc argument caches comparableClassFor(key) upon first use
-         * comparing keys.
-         */
+        //使用给定的hash和key从根节点开始查找。kc参数在第一次使用比较键时缓存comparableClassFor(key)。
         final TreeNode<K, V> find(int h, Object k, Class<?> kc) {
-            TreeNode<K, V> p = this;
+            TreeNode<K, V> p = this;  //当前节点（根节点）
             do {
-                int ph, dir;
+                int ph,
+                int dir;
                 K pk;
-                TreeNode<K, V> pl = p.left, pr = p.right, q;
+                TreeNode<K, V> pl = p.left,  //左节点
+                TreeNode<K, V> pr = p.right, //右节点
+                TreeNode<K, V> q;
+                //查找节点hash值小于p的hash值，搜索左子树
                 if ((ph = p.hash) > h)
                     p = pl;
+                    //查找节点hash值大于p的hash值，搜索右子树
                 else if (ph < h)
                     p = pr;
+                    //key值相同，说明就是此p节点
                 else if ((pk = p.key) == k || (k != null && k.equals(pk)))
                     return p;
+                    //若hash相等但key不等，向左右子树非空的一侧移动
                 else if (pl == null)
                     p = pr;
                 else if (pr == null)
                     p = pl;
+                    //左右两边都不为空
+                    //判断kc是否是k实现的可比较的类，是就比较k和pk的值，k<pk向左子树移动否则向右子树移动
+                    //hash相等，key不等，使用key实现的compareTo判断大小
                 else if ((kc != null ||
                         (kc = comparableClassFor(k)) != null) &&
                         (dir = compareComparables(kc, k, pk)) != 0)
                     p = (dir < 0) ? pl : pr;
+                    //上面所有情况依旧不能判断左右，就先递归判断右子树，看是否匹配上，匹配上就赋右子树，否则左子树
                 else if ((q = pr.find(h, k, kc)) != null)
                     return q;
                 else
@@ -2354,9 +2365,8 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
             }
         }
 
-        /**
-         * Recursive invariant check
-         */
+
+        //递归不变量检查
         static <K, V> boolean checkInvariants(TreeNode<K, V> t) {
             TreeNode<K, V> tp = t.parent, tl = t.left, tr = t.right,
                     tb = t.prev, tn = (TreeNode<K, V>) t.next;

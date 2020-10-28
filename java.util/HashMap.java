@@ -2043,7 +2043,7 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
             }
             //p指向删除的节点
             //上面修正链表的关系，下面修正树中的关系
-            TreeNode<K, V> p = this, pl = left, pr = right, replacement;
+            TreeNode<K, V> p = this, pl = left, pr = right, replacement; //变量replacement用来替换被删除节点的位置
             if (pl != null && pr != null) {
                 //删除节点的左右子树都不为空，参考红黑树删除4种情况
                 TreeNode<K, V> s = pr, sl;
@@ -2056,44 +2056,58 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
                 p.red = c;
 
                 TreeNode<K, V> sr = s.right;
-                TreeNode<K, V> pp = p.parent;
+                TreeNode<K, V> pp = p.parent; //当前节点的父节点
                 if (s == pr) { //
-                    //s是p的右儿子，直接父子关系，交换p和s的位置
+                    //s是p的右节点，直接父子关系，交换p和s的位置
                     //改变两节点的指向，相当于交换值
                     p.parent = s;
                     s.right = p;
                 } else {
                     TreeNode<K, V> sp = s.parent;
+                    //删除节点的父节点指向其后继节点的父节点
                     if ((p.parent = sp) != null) {
+                        //判断s是左子节点还是右子节点，s父节点一侧指向删除节点p
                         if (s == sp.left)
                             sp.left = p;
                         else
                             sp.right = p;
                     }
                     if ((s.right = pr) != null)
+                        //s右节点指向原本p的右节点，不为空，原p右子节点的父节点指向s
                         pr.parent = s;
                 }
+                //修改p的左节点为空，因为现在p已经在后继节点上
                 p.left = null;
+                //两个if是调整p和s交换后节点的指向关系
                 if ((p.right = sr) != null)
                     sr.parent = p;
                 if ((s.left = pl) != null)
                     pl.parent = s;
                 if ((s.parent = pp) == null)
+                    //p的父亲成为s的父亲，为空说明是根节点，root指向s
                     root = s;
                 else if (p == pp.left)
+                    //p的父亲的左儿子原为p，现为s
                     pp.left = s;
                 else
+                    //否则右儿子为s
                     pp.right = s;
                 if (sr != null)
+                    //若s结点有右儿子（s没有左儿子，因为s是后继节点），则replacement为这个右儿子否则为p
+                    //replacement相当于p和后继节点s交换后，删除s位置取代其位置的节点，参考红黑树删除过程理解
                     replacement = sr;
                 else
                     replacement = p;
+                //删除节点的左右子树一侧为空，参考红黑树删除4种情况
+                //若p的左右儿子为空，则replacement为非空的一方，否则为p自己
             } else if (pl != null)
                 replacement = pl;
             else if (pr != null)
                 replacement = pr;
             else
                 replacement = p;
+            //replacement不为p，即不为叶子节点（相当于之前所讲的红黑树中有两个NIL节点的节点）
+            //处理连接关系
             if (replacement != p) {
                 TreeNode<K, V> pp = replacement.parent = p.parent;
                 if (pp == null)
@@ -2102,11 +2116,14 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
                     pp.left = replacement;
                 else
                     pp.right = replacement;
+                //移除p节点
                 p.left = p.right = p.parent = null;
             }
 
+            //红黑树自平衡调节，如果为红色，则不需要进行调整，否则需要自平衡调整，后面会对这个方法进行分析
             TreeNode<K, V> r = p.red ? root : balanceDeletion(root, replacement);
 
+            //后继节点无子节点，直接移除p节点即能保持平衡
             if (replacement == p) {  // detach
                 TreeNode<K, V> pp = p.parent;
                 p.parent = null;
@@ -2118,37 +2135,34 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
                 }
             }
             if (movable)
+                //调整root使其落在tab数组上
                 moveRootToFront(tab, r);
         }
 
         /**
-         * Splits nodes in a tree bin into lower and upper tree bins,
-         * or untreeifies if now too small. Called only from resize;
-         * see above discussion about split bits and indices.
-         *
-         * @param map   the map
-         * @param tab   the table for recording bin heads
-         * @param index the index of the table being split
-         * @param bit   the bit of hash to split on
+         * 拆分，在HashMap.resize方法中调用 ((TreeNode<K,V>)e).split(this, newTab, j, oldCap)。
+         * 在扩容之后，红黑树和链表因为扩容的原因导致原本在一个数组元素下的Node节点分为高低位两部分（参考HashMap.resize链表部分的改变，是相同的），
+         * 低位树即当前位置，高位树则在新扩容的tab上
          */
         final void split(HashMap<K, V> map, Node<K, V>[] tab, int index, int bit) {
             TreeNode<K, V> b = this;
-            // Relink into lo and hi lists, preserving order
+            //分成高位树和低位树，头尾节点先声明
             TreeNode<K, V> loHead = null, loTail = null;
             TreeNode<K, V> hiHead = null, hiTail = null;
             int lc = 0, hc = 0;
+            //循环处理节点
             for (TreeNode<K, V> e = b, next; e != null; e = next) {
                 next = (TreeNode<K, V>) e.next;
                 e.next = null;
-                if ((e.hash & bit) == 0) {
+                if ((e.hash & bit) == 0) { //0说明在低位树，即原位置
                     if ((e.prev = loTail) == null)
-                        loHead = e;
+                        loHead = e;  //头节点设置
                     else
-                        loTail.next = e;
+                        loTail.next = e;  //链表next设置
                     loTail = e;
                     ++lc;
                 } else {
-                    if ((e.prev = hiTail) == null)
+                    if ((e.prev = hiTail) == null)  //同上，主要是在高位树上处理
                         hiHead = e;
                     else
                         hiTail.next = e;
@@ -2157,12 +2171,14 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
                 }
             }
 
+            //对高低位树进行处理，将数组节点指向树根节点或者链表首节点
             if (loHead != null) {
-                if (lc <= UNTREEIFY_THRESHOLD)
+                if (lc <= UNTREEIFY_THRESHOLD)  //拆分之后节点小于非树化阈值，转成链表结构
                     tab[index] = loHead.untreeify(map);
                 else {
                     tab[index] = loHead;
-                    if (hiHead != null) // (else is already treeified)
+                    //高位树为空则表示节点全部留在了低位树，不需要进行树化操作，已经树化过了
+                    if (hiHead != null)
                         loHead.treeify(tab);
                 }
             }
@@ -2170,6 +2186,7 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
                 if (hc <= UNTREEIFY_THRESHOLD)
                     tab[index + bit] = hiHead.untreeify(map);
                 else {
+                    //高位所处的位置为原本位置+旧数组的大小即bit
                     tab[index + bit] = hiHead;
                     if (loHead != null)
                         hiHead.treeify(tab);
@@ -2219,7 +2236,17 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
             return root;
         }
 
-        //右旋
+        /***
+         *  右旋: 将旋转点的左节点变成其父节点
+         *
+         *        pp                     pp
+         *       /                      /
+         *      p                      r
+         *     /  \                   / \
+         *    r    pr       ==>      rl  p
+         *   / \                        / \
+         *  rl  rr                     rr  pr
+         */
         static <K, V> TreeNode<K, V> rotateRight(TreeNode<K, V> root, TreeNode<K, V> p) {
             TreeNode<K, V> l, pp, lr;
             if (p != null && (l = p.left) != null) {
@@ -2237,34 +2264,69 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
             return root;
         }
 
-        static <K, V> TreeNode<K, V> balanceInsertion(TreeNode<K, V> root,
-                                                      TreeNode<K, V> x) {
+        //插入节点之后进行平衡调整，x为新添加的节点，root为树的根节点，返回根节点。
+        static <K, V> TreeNode<K, V> balanceInsertion(TreeNode<K, V> root, TreeNode<K, V> x) {
+            //根据红黑树属性插入的节点默认设置为红色
             x.red = true;
+            //通过循环进行调整,从叶子到根节点进行局部调整
             for (TreeNode<K, V> xp, xpp, xppl, xppr; ; ) {
+                //x的父节点为空，说明x节点为根节点，将颜色置为黑即可
+                //符合插入节点第一种情况
                 if ((xp = x.parent) == null) {
                     x.red = false;
                     return x;
+                    //x父节点为黑色或者x的祖父节点为空
+                    //符合插入节点第二种情况
                 } else if (!xp.red || (xpp = xp.parent) == null)
                     return root;
+                //下面情况中x的颜色都为红色，因为上边已经判断过黑色
+                //x的父节点为x祖父节点的左儿子，插入情况下三四种情况需要区分左还是右
                 if (xp == (xppl = xpp.left)) {
+                    /**
+                     * x祖父右儿子，即x的叔叔不为空，且为红色 ,符合插入节点第三种情况
+                     *         xpp
+                     *        /   \
+                     *       /     \
+                     *   xp/xppl  xppr
+                     *     /
+                     *    x
+                     */
                     if ((xppr = xpp.right) != null && xppr.red) {
-                        xppr.red = false;
-                        xp.red = false;
-                        xpp.red = true;
-                        x = xpp;
+                        xppr.red = false;  //x的叔叔修改为黑色
+                        xp.red = false;    //x的父节点修改为黑色
+                        xpp.red = true;    //x的祖父节点修改为红色
+                        x = xpp;  //x指向x的祖父节点，以祖父节点循环继续向上调整，相当于xpp是插入节点
                     } else {
                         if (x == xp.right) {
+                            /**
+                             * 以x父节点进行左旋:
+                             *      xpp            xpp
+                             *      /              /
+                             *   xp/xppl   =>     x
+                             *      \            /
+                             *       x        xp/xppl
+                             */
                             root = rotateLeft(root, x = xp);
                             xpp = (xp = x.parent) == null ? null : xp.parent;
                         }
                         if (xp != null) {
-                            xp.red = false;
+                            xp.red = false; //x的父节点改为黑色
                             if (xpp != null) {
-                                xpp.red = true;
+                                xpp.red = true; //x的父节点改为红色
+                                /**
+                                 * 以x的祖父节点进行右旋转
+                                 *     xpp
+                                 *     /
+                                 *    xp   ==>     xp（黑）
+                                 *   /            /  \
+                                 *  x       （红）x    xpp（红）
+                                 */
                                 root = rotateRight(root, xpp);
                             }
                         }
                     }
+                    //x的父节点为x祖父节点的右儿子
+                    //下面跟上边类似，对称关系
                 } else {
                     if (xppl != null && xppl.red) {
                         xppl.red = false;
@@ -2288,14 +2350,18 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
             }
         }
 
-        static <K, V> TreeNode<K, V> balanceDeletion(TreeNode<K, V> root,
-                                                     TreeNode<K, V> x) {
+        //删除节点后自平衡操作，x是删除节点的替换节点
+        static <K, V> TreeNode<K, V> balanceDeletion(TreeNode<K, V> root, TreeNode<K, V> x) {
+            //循环操作，平衡局部之后继续判断调整
             for (TreeNode<K, V> xp, xpl, xpr; ; ) {
+                //删除节点为空或x为根节点直接返回，平衡调整完毕x=root
                 if (x == null || x == root)
                     return root;
+                    //删除后x父节点为空，说明x为根节点，x置为黑色，红黑树平衡
                 else if ((xp = x.parent) == null) {
-                    x.red = false;
+                    x.red = false;   //xp为空 x为根节点，x置为黑色
                     return x;
+                    //x为红色，原节点必为黑色，变色操作即可满足红黑树特性达到平衡
                 } else if (x.red) {
                     x.red = false;
                     return root;
@@ -2376,12 +2442,14 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
         }
 
 
-        //递归不变量检查
+        //对整棵树进行红黑树一致性的检查 目前仅在检查root是否落在table上时调用，满足红黑树的特性以及节点指向的正确性
         static <K, V> boolean checkInvariants(TreeNode<K, V> t) {
             TreeNode<K, V> tp = t.parent, tl = t.left, tr = t.right,
                     tb = t.prev, tn = (TreeNode<K, V>) t.next;
+            //t的前一个节点的后一个节点应为t
             if (tb != null && tb.next != t)
                 return false;
+            //t的前一个节点的后一个节点应为t
             if (tn != null && tn.prev != t)
                 return false;
             if (tp != null && t != tp.left && t != tp.right)
@@ -2399,5 +2467,4 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
             return true;
         }
     }
-
 }

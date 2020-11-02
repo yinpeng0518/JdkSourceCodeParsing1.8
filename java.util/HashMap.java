@@ -1859,7 +1859,7 @@ public class HashMap<K, V> extends AbstractMap<K, V> implements Map<K, V>, Clone
         /**
          * 比较两个对象的大小，返回值只能大于0或小于0，不能为0，
          * 因为需要插入节点是放在左子树还是右子树，这里在两个对象都不为空时，先比较两个对象的类名按字符串规则比较，
-         * 如果类名比较不出来或者为空则调用native方法去比较hashcode值，相等时返回-1
+         * 如果类名比较不出来或者为0则调用native方法去比较hashcode值，相等时返回-1
          */
         static int tieBreakOrder(Object a, Object b) {
             int d;

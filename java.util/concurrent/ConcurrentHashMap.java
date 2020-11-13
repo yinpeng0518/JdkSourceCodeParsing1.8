@@ -257,77 +257,31 @@ public class ConcurrentHashMap<K, V> extends AbstractMap<K, V>
 
     /* ---------------- Public operations -------------- */
 
-    /**
-     * Creates a new, empty map with the default initial table size (16).
-     */
+    //用默认的初始表大小(16)创建一个新的空ConcurrentHashMap
     public ConcurrentHashMap() {
     }
 
-    /**
-     * Creates a new, empty map with an initial table size
-     * accommodating the specified number of elements without the need
-     * to dynamically resize.
-     *
-     * @param initialCapacity The implementation performs internal
-     *                        sizing to accommodate this many elements.
-     * @throws IllegalArgumentException if the initial capacity of
-     *                                  elements is negative
-     */
     public ConcurrentHashMap(int initialCapacity) {
         if (initialCapacity < 0)
             throw new IllegalArgumentException();
         int cap = ((initialCapacity >= (MAXIMUM_CAPACITY >>> 1)) ?
                 MAXIMUM_CAPACITY :
                 tableSizeFor(initialCapacity + (initialCapacity >>> 1) + 1));
+        // 设置sizeCtl，此时表示数组初始化使用容量，因为在初始化时将会使用这个变量
         this.sizeCtl = cap;
     }
 
-    /**
-     * Creates a new map with the same mappings as the given map.
-     *
-     * @param m the map
-     */
     public ConcurrentHashMap(Map<? extends K, ? extends V> m) {
+        // sizeCtl设置为默认容量，此时表示数组初始化使用容量
         this.sizeCtl = DEFAULT_CAPACITY;
         putAll(m);
     }
 
-    /**
-     * Creates a new, empty map with an initial table size based on
-     * the given number of elements ({@code initialCapacity}) and
-     * initial table density ({@code loadFactor}).
-     *
-     * @param initialCapacity the initial capacity. The implementation
-     *                        performs internal sizing to accommodate this many elements,
-     *                        given the specified load factor.
-     * @param loadFactor      the load factor (table density) for
-     *                        establishing the initial table size
-     * @throws IllegalArgumentException if the initial capacity of
-     *                                  elements is negative or the load factor is nonpositive
-     * @since 1.6
-     */
     public ConcurrentHashMap(int initialCapacity, float loadFactor) {
         this(initialCapacity, loadFactor, 1);
     }
 
-    /**
-     * Creates a new, empty map with an initial table size based on
-     * the given number of elements ({@code initialCapacity}), table
-     * density ({@code loadFactor}), and number of concurrently
-     * updating threads ({@code concurrencyLevel}).
-     *
-     * @param initialCapacity  the initial capacity. The implementation
-     *                         performs internal sizing to accommodate this many elements,
-     *                         given the specified load factor.
-     * @param loadFactor       the load factor (table density) for
-     *                         establishing the initial table size
-     * @param concurrencyLevel the estimated number of concurrently
-     *                         updating threads. The implementation may use this value as
-     *                         a sizing hint.
-     * @throws IllegalArgumentException if the initial capacity is
-     *                                  negative or the load factor or concurrencyLevel are
-     *                                  nonpositive
-     */
+    // concurrencyLevel 并发级别 兼容旧版本
     public ConcurrentHashMap(int initialCapacity,
                              float loadFactor, int concurrencyLevel) {
         if (!(loadFactor > 0.0f) || initialCapacity < 0 || concurrencyLevel <= 0)

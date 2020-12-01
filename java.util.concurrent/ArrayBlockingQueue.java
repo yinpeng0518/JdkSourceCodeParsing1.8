@@ -11,6 +11,10 @@ import java.util.Spliterators;
 import java.util.Spliterator;
 
 /**
+ * {@link "https://www.gclearning.cn/views/JDK%E6%BA%90%E7%A0%81%E9%82%A3%E4%BA%9B%E4%BA%8B%E5%84%BF/2019/072813.html"}
+ * {@link "https://blog.csdn.net/qq_39470742/article/details/89440522"}
+ * ArrayBlockingQueue是数组实现的线程安全的有界的阻塞队列
+ *
  * @param <E> the type of elements held in this collection
  * @author Doug Lea
  * @since 1.5
@@ -513,22 +517,11 @@ public class ArrayBlockingQueue<E> extends AbstractQueue<E> implements BlockingQ
         }
     }
 
-    /**
-     * @throws UnsupportedOperationException {@inheritDoc}
-     * @throws ClassCastException            {@inheritDoc}
-     * @throws NullPointerException          {@inheritDoc}
-     * @throws IllegalArgumentException      {@inheritDoc}
-     */
+
     public int drainTo(Collection<? super E> c) {
         return drainTo(c, Integer.MAX_VALUE);
     }
 
-    /**
-     * @throws UnsupportedOperationException {@inheritDoc}
-     * @throws ClassCastException            {@inheritDoc}
-     * @throws NullPointerException          {@inheritDoc}
-     * @throws IllegalArgumentException      {@inheritDoc}
-     */
     public int drainTo(Collection<? super E> c, int maxElements) {
         checkNotNull(c);
         if (c == this)
@@ -574,99 +567,41 @@ public class ArrayBlockingQueue<E> extends AbstractQueue<E> implements BlockingQ
     }
 
     /**
-     * Returns an iterator over the elements in this queue in proper sequence.
-     * The elements will be returned in order from first (head) to last (tail).
+     * 以适当的顺序在此队列中的元素上返回一个迭代器。
+     * 元素将按照从第一个(头)到最后一个(尾)的顺序返回。
+     * 返回的迭代器是弱一致的
      *
-     * <p>The returned iterator is
-     * <a href="package-summary.html#Weakly"><i>weakly consistent</i></a>.
-     *
-     * @return an iterator over the elements in this queue in proper sequence
+     * @return 一个迭代器以适当的顺序遍历此队列中的元素
      */
     public Iterator<E> iterator() {
         return new Itr();
     }
 
     /**
-     * Shared data between iterators and their queue, allowing queue
-     * modifications to update iterators when elements are removed.
-     *
-     * This adds a lot of complexity for the sake of correctly
-     * handling some uncommon operations, but the combination of
-     * circular-arrays and supporting interior removes (i.e., those
-     * not at head) would cause iterators to sometimes lose their
-     * places and/or (re)report elements they shouldn't.  To avoid
-     * this, when a queue has one or more iterators, it keeps iterator
-     * state consistent by:
-     *
-     * (1) keeping track of the number of "cycles", that is, the
-     * number of times takeIndex has wrapped around to 0.
-     * (2) notifying all iterators via the callback removedAt whenever
-     * an interior element is removed (and thus other elements may
-     * be shifted).
-     *
-     * These suffice to eliminate iterator inconsistencies, but
-     * unfortunately add the secondary responsibility of maintaining
-     * the list of iterators.  We track all active iterators in a
-     * simple linked list (accessed only when the queue's lock is
-     * held) of weak references to Itr.  The list is cleaned up using
-     * 3 different mechanisms:
-     *
-     * (1) Whenever a new iterator is created, do some O(1) checking for
-     * stale list elements.
-     *
-     * (2) Whenever takeIndex wraps around to 0, check for iterators
-     * that have been unused for more than one wrap-around cycle.
-     *
-     * (3) Whenever the queue becomes empty, all iterators are notified
-     * and this entire data structure is discarded.
-     *
-     * So in addition to the removedAt callback that is necessary for
-     * correctness, iterators have the shutdown and takeIndexWrapped
-     * callbacks that help remove stale iterators from the list.
-     *
-     * Whenever a list element is examined, it is expunged if either
-     * the GC has determined that the iterator is discarded, or if the
-     * iterator reports that it is "detached" (does not need any
-     * further state updates).  Overhead is maximal when takeIndex
-     * never advances, iterators are discarded before they are
-     * exhausted, and all removals are interior removes, in which case
-     * all stale iterators are discovered by the GC.  But even in this
-     * case we don't increase the amortized complexity.
-     *
-     * Care must be taken to keep list sweeping methods from
-     * reentrantly invoking another such method, causing subtle
-     * corruption bugs.
+     * Itr是ArrayBlockingQueue的迭代器类，而Itrs则是由Itr组成的链表集合类。
+     * 对于Itrs和Itr，因为循环数组和移除元素时会使迭代器丢失他们的位置，为了保证迭代器和队列数据的一致性，需要注意
+     * （1）记录所有takeIndex循环到0的次数
+     * （2）每次删除元素都需要通过removeAt方法通知到所有的迭代器。
+     * Itrs中使用的是Itr的弱引用类，因此需要针对Itrs中的过期迭代器进行清理。清理过期节点主要有3个时机：
+     * （1）建立了新的迭代器，调用doSomeSweep
+     * （2）takeIndex循环到0，调用takeIndexWrapped
+     * （3）队列变为空队列时，调用queueIsEmpty
      */
     class Itrs {
-
-        /**
-         * Node in a linked list of weak iterator references.
-         */
+        //继承WeakReference实现Node的弱引用
         private class Node extends WeakReference<Itr> {
             Node next;
-
             Node(Itr iterator, Node next) {
                 super(iterator);
                 this.next = next;
             }
         }
 
-        /**
-         * Incremented whenever takeIndex wraps around to 0
-         */
-        int cycles = 0;
 
-        /**
-         * Linked list of weak iterator references
-         */
-        private Node head;
-
-        /**
-         * Used to expunge stale iterators
-         */
-        private Node sweeper = null;
-
-        private static final int SHORT_SWEEP_PROBES = 4;
+        int cycles = 0;  //takeIndex 循环到0的次数
+        private Node head; //头结点
+        private Node sweeper = null; //清理过期迭代器的开始节点
+        private static final int SHORT_SWEEP_PROBES = 4; //清理过期迭代器时的节点检查数量，harder模式时16，否则4
         private static final int LONG_SWEEP_PROBES = 16;
 
         Itrs(Itr initial) {
@@ -674,12 +609,12 @@ public class ArrayBlockingQueue<E> extends AbstractQueue<E> implements BlockingQ
         }
 
         /**
-         * Sweeps itrs, looking for and expunging stale iterators.
-         * If at least one was found, tries harder to find more.
-         * Called only from iterating thread.
-         *
-         * @param tryHarder whether to start in try-harder mode, because
-         *                  there is known to be at least one iterator to collect
+         * 该方法用于检查并清理过期节点，参数为是否采用harder模式，harder模式检查16个节点，非harder模式检查4个节点。
+         * 一旦找到一个过期的节点，就会采用harder模式检查更多的节点。
+         * 检查并清理的动作在循环中进行，检查结束的条件由以下3个，满足其一就可以离开循环。
+         * （1）检查的节点数量达到要求
+         * （2）链表已经完整了检查了一遍。
+         * （3）链表中已经没有迭代器
          */
         void doSomeSweeping(boolean tryHarder) {
             // assert lock.getHoldCount() == 1;
@@ -687,7 +622,7 @@ public class ArrayBlockingQueue<E> extends AbstractQueue<E> implements BlockingQ
             int probes = tryHarder ? LONG_SWEEP_PROBES : SHORT_SWEEP_PROBES;
             Node o, p;
             final Node sweeper = this.sweeper;
-            boolean passedGo;   // to limit search to one full sweep
+            boolean passedGo;   //passGo表示已经从头结点开始检查
 
             if (sweeper == null) {
                 o = null;
@@ -701,14 +636,17 @@ public class ArrayBlockingQueue<E> extends AbstractQueue<E> implements BlockingQ
 
             for (; probes > 0; probes--) {
                 if (p == null) {
+                    //已经检查到尾节点，并且检查是从头节点开始的，跳出循环
                     if (passedGo)
                         break;
+                    //已经检查到尾节点，但没有检查过头结点，从头节点开始再次检查，并记录passedGo=true
                     o = null;
                     p = head;
                     passedGo = true;
                 }
                 final Itr it = p.get();
                 final Node next = p.next;
+                //过期的无效节点
                 if (it == null || it.isDetached()) {
                     // found a discarded/exhausted iterator
                     probes = LONG_SWEEP_PROBES; // "try harder"
@@ -733,18 +671,15 @@ public class ArrayBlockingQueue<E> extends AbstractQueue<E> implements BlockingQ
             this.sweeper = (p == null) ? null : o;
         }
 
-        /**
-         * Adds a new iterator to the linked list of tracked iterators.
-         */
+        //迭代器加入Itrs链表，头插法。
         void register(Itr itr) {
             // assert lock.getHoldCount() == 1;
             head = new Node(itr, head);
         }
 
         /**
-         * Called whenever takeIndex wraps around to 0.
-         *
-         * Notifies all iterators, and expunges any that are now stale.
+         * takeIndex每次循环到0时会调用该方法。
+         * cycle计数增加，遍历链表检查并清理过期的无效节点
          */
         void takeIndexWrapped() {
             // assert lock.getHoldCount() == 1;
@@ -798,10 +733,7 @@ public class ArrayBlockingQueue<E> extends AbstractQueue<E> implements BlockingQ
         }
 
         /**
-         * Called whenever the queue becomes empty.
-         *
-         * Notifies all active iterators that the queue is empty,
-         * clears all weak refs, and unlinks the itrs datastructure.
+         * 队列每次变为空队列时调用，清空所有有效的迭代器。
          */
         void queueIsEmpty() {
             // assert lock.getHoldCount() == 1;
@@ -817,7 +749,7 @@ public class ArrayBlockingQueue<E> extends AbstractQueue<E> implements BlockingQ
         }
 
         /**
-         * Called whenever an element has been dequeued (at takeIndex).
+         * 在ArrayBlockingQueue中移除元素（包括出队和remove）时调用，保证迭代器和队列数据的一致性。
          */
         void elementDequeued() {
             // assert lock.getHoldCount() == 1;
@@ -828,18 +760,31 @@ public class ArrayBlockingQueue<E> extends AbstractQueue<E> implements BlockingQ
         }
     }
 
+    /**
+     * Itr是ArrayBlockingQueue的迭代器，所有迭代器都会记录到对应ArrayBlockingQueue的itrs属性中。
+     * Itr是一个先读后写的迭代器，会先预读到next的值进行保存，即使后续next对应的元素被移除也能通过迭代器的next方法访问到。
+     * 这是为了防止hasNext方法执行和next方法执行的之间的某个时刻，该节点被删除，
+     * 导致hasNext返回true而next返回值却为null的情形，因此ArrayBlockingQueue的迭代器Itr是弱一致性的。
+     * 当迭代器的所有下标都为负数或者hasNext第一次返回false时进入detach状态，表示迭代器已经无用，可以从itrs中移除。
+     */
     private class Itr implements Iterator<E> {
-        private int cursor; //指向下一个迭代元素的游标，结束时为NONE（-1）
-        private E nextItem; //下次调用next()返回的元素，无则返回null
-        private int nextIndex;  //下一个元素nextItem的索引值，空的话返回NONE（-1），如果被移除了则返回REMOVED（-2）
-        private E lastItem; //上一次调用next()返回的元素，无则返回null
+        private int cursor; //游标，下一个next节点对应的下标，到达putIndex结束的位置为NONE（-1）
+        private E nextItem; //next节点的元素值，无则返回null
+        private int nextIndex;  //next节点的下标，空的话返回NONE（-1），如果被移除了则返回REMOVED（-2）
+        private E lastItem; //上一个节点的元素值，无则返回null
         private int lastRet;  //上一个元素的索引值，空的话返回NONE，如果被移除了则返回REMOVED
-        private int prevTakeIndex; //上一个takeIndex对应的值，当处于无效状态时为DETACHED（-3），以这个变量标识迭代器DETACHED状态
-        private int prevCycles;  //上一个cycles的值
+        private int prevTakeIndex; //记录takeIndex，当处于无效状态时为DETACHED（-3），以这个变量标识迭代器DETACHED状态
+        private int prevCycles;  //记录cycles
         private static final int NONE = -1; //标识不可用值或未定义值
         private static final int REMOVED = -2;  // 标识元素被移除
         private static final int DETACHED = -3;  // 标识prevTakeIndex为无效状态
 
+        /**
+         * 每次都会预读到next的值存储到nextItem和nextIndex，并且保存上一次的返回值lastItem和lastRet。
+         * 由于ArrayBlockingQueue时一个循环数组，takeIndex和putIndex一直在循环移动。
+         * 这样子就有可能出现，迭代器创建时位置已经确定，但是随着ArrayBlockingQueue数组不断循环，位置一直在变化，导致迭代器的结果有误。
+         * 因此需要记录旧的takeIndex和cycles，在遍历时比较这两个值与当前值，以修正下标索引，保证遍历的正确性。
+         */
         Itr() {
             // 构造时上一个元素索引为空
             lastRet = NONE;
@@ -847,7 +792,7 @@ public class ArrayBlockingQueue<E> extends AbstractQueue<E> implements BlockingQ
             final ReentrantLock lock = ArrayBlockingQueue.this.lock;
             lock.lock();
             try {
-                // 队列为空，初始化变量
+                //没有元素，无用的迭代器，直接进入detach模式
                 if (count == 0) {
                     cursor = NONE;
                     nextIndex = NONE;
@@ -898,6 +843,7 @@ public class ArrayBlockingQueue<E> extends AbstractQueue<E> implements BlockingQ
         }
 
         /**
+         * 用于检查并修正Itr的下标属性，在noNext、next和remove方法中会被调用。
          * 从prevTakeIndex开始，队列索引index无效则返回true
          * 在incorporateDequeues中使用，比较index，prevTakeIndex的距离与实际距离
          */
@@ -951,11 +897,7 @@ public class ArrayBlockingQueue<E> extends AbstractQueue<E> implements BlockingQ
         }
 
         /**
-         * Called when itrs should stop tracking this iterator, either
-         * because there are no more indices to update (cursor < 0 &&
-         * nextIndex < 0 && lastRet < 0) or as a special exception, when
-         * lastRet >= 0, because hasNext() is about to return false for the
-         * first time.  Call only from iterating thread.
+         * 修改detach的标志字段，并且启动itrs的清理逻辑
          */
         private void detach() {
             if (prevTakeIndex >= 0) {
@@ -967,6 +909,7 @@ public class ArrayBlockingQueue<E> extends AbstractQueue<E> implements BlockingQ
         }
 
         /**
+         * 判断下一个节点是否存在，由于下一个元素已经预读取并保存在nextItem，判断nextItem是否为null即可。
          * 出于对性能的考虑，这里不会进行加锁
          */
         public boolean hasNext() {
@@ -980,6 +923,7 @@ public class ArrayBlockingQueue<E> extends AbstractQueue<E> implements BlockingQ
 
         /**
          * 无元素，清理
+         * 对于没有下一个节点的迭代器，需要修正下标属性并进入detach模式。
          */
         private void noNext() {
             final ReentrantLock lock = ArrayBlockingQueue.this.lock;
@@ -999,6 +943,9 @@ public class ArrayBlockingQueue<E> extends AbstractQueue<E> implements BlockingQ
             }
         }
 
+        /**
+         * 由于下一个元素已经与读取，因此next方法的主要逻辑不是读取下一个元素，而是预读取并保存下一个元素的下一个元素。
+         */
         public E next() {
             // 迭代返回值，每次调用next前已经确定了nextItem值
             final E x = nextItem;
@@ -1084,6 +1031,7 @@ public class ArrayBlockingQueue<E> extends AbstractQueue<E> implements BlockingQ
 
         /**
          * 队列内部元素被删除时调用，保证迭代器的正确性
+         * 所有队列移除非takeIndex下标处元素的方法都会调用迭代器的removeAt方法以通知其修正下标索引值。
          */
         boolean removedAt(int removedIndex) {
             // 当前迭代器无效时直接返回true
@@ -1146,6 +1094,7 @@ public class ArrayBlockingQueue<E> extends AbstractQueue<E> implements BlockingQ
         boolean takeIndexWrapped() {
             if (isDetached())
                 return true;
+            //已经循环至少两圈，迭代器的所有元素都已经无效
             if (itrs.cycles - prevCycles > 1) {
                 // 迭代器所有元素都已经在入队出队中不存在了，需置迭代器无效，这里也能看到相差2的时候已经无效了
                 shutdown();

@@ -38,7 +38,6 @@ public abstract class AbstractQueuedSynchronizer extends AbstractOwnableSynchron
      */
     static final class Node {
 
-        Node nextWaiter;  //共享模式/独占模式
         static final Node SHARED = new Node();  //标识节点当前在共享模式下
         static final Node EXCLUSIVE = null;     //标识节点当前在独占模式下
 
@@ -52,12 +51,14 @@ public abstract class AbstractQueuedSynchronizer extends AbstractOwnableSynchron
         volatile Node next;      //当前节点/线程的后继节点
         volatile Thread thread;  //每一个节点对应一个线程
 
-        //是否共享锁
+        Node nextWaiter;  //共享模式/独占模式
+
+        //如果节点在共享模式下等待，则返回true
         final boolean isShared() {
             return nextWaiter == SHARED;
         }
 
-        //前趋节点
+        //返回上一个节点，如果为null则抛出NullPointerException
         final Node predecessor() throws NullPointerException {
             Node p = prev;
             if (p == null)
@@ -66,7 +67,7 @@ public abstract class AbstractQueuedSynchronizer extends AbstractOwnableSynchron
                 return p;
         }
 
-        Node() {    // 用于建立初始头或共享标记
+        Node() {    // 用于建立初始head节点或共享标记
         }
 
         Node(Thread thread, Node mode) {     // 用于addWaiter
@@ -74,24 +75,31 @@ public abstract class AbstractQueuedSynchronizer extends AbstractOwnableSynchron
             this.thread = thread;
         }
 
-        Node(Thread thread, int waitStatus) { // 用于 Condition
+        Node(Thread thread, int waitStatus) { // 用于Condition
             this.waitStatus = waitStatus;
             this.thread = thread;
         }
     }
 
+    /**
+     * 等待队列的头节点，延迟初始化。除了初始化之外，它只能通过sethead方法进行修改。
+     * 注意:如果head存在，它的waitStatus保证不会被取消
+     */
+    private transient volatile Node head;
 
-    private transient volatile Node head;  // 同步队列头节点
-    private transient volatile Node tail;  // 同步队列尾节点
+    /**
+     * 等待队列的尾节点，延迟初始化。仅通过方法enq修改，以添加新的等待节点.
+     */
+    private transient volatile Node tail;
     private volatile int state;  // 当前锁的状态：0代表没有被占用，大于0代表锁已被线程占用(锁可以重入，每次重入都+1)
     private transient Thread exclusiveOwnerThread; // 继承自AbstractOwnableSynchronizer 持有当前锁的线程
 
-    //返回同步状态的当前值
+    //返回同步状态的当前值。该操作具有volatile读的内存语义。
     protected final int getState() {
         return state;
     }
 
-    //设置当前同步状态
+    //设置同步状态的值。该操作具有volatile写的内存语义。
     protected final void setState(int newState) {
         state = newState;
     }
@@ -102,12 +110,13 @@ public abstract class AbstractQueuedSynchronizer extends AbstractOwnableSynchron
     }
 
     //这个主要就是为了让那些超时时间非常短的线程，不进入超时等待，直接无条件的做快速自旋即可。
-    static final long spinForTimeoutThreshold = 1000L;
+    static final long spinForTimeoutThreshold = 1000L;  //自旋超时阈值
 
     /**
      * 1.通过自旋的方式将node入队，只有node入队成功才返回，否则一直循环。
      * 2.如果队列为空，初始化head/tail，初始化之后再次循环到else分支，将node入队。
      * 3.node入队时，通过CAS将node置为tail。CAS操作失败，说明被其它线程抢先入队了，自旋，直到成功。
+     * 4.返回入队node的前驱节点
      */
     private Node enq(final Node node) {
         // 自旋：循环入列，直到成功
@@ -130,6 +139,8 @@ public abstract class AbstractQueuedSynchronizer extends AbstractOwnableSynchron
     }
 
     /**
+     * 为当前线程和给定模式创建并进入等待队列
+     *
      * 线程抢锁失败后，封装成node加入队列:
      * 1.队列有tail，可直接入队。入队时，通过CAS将node置为tail。CAS操作失败，说明被其它线程抢先入队了，node需要通过enq()方法入队。
      * 2.队列没有tail，说明队列是空的，node通过enq()方法入队，enq()会初始化head和tail。
@@ -142,7 +153,7 @@ public abstract class AbstractQueuedSynchronizer extends AbstractOwnableSynchron
         Node node = new Node(Thread.currentThread(), mode);
 
         Node pred = tail; //队列尾结点
-        if (pred != null) { //如果尾结点，从队尾加入队列
+        if (pred != null) { //如果有尾结点，从队尾加入队列
             node.prev = pred; //将加入节点(node)的前趋节点指向尾结点
             //通过CAS将node置为尾节点。CAS操作失败，说明被其它线程抢先入队了，node需要通过enq()方法入队
             if (compareAndSetTail(pred, node)) {
@@ -155,14 +166,14 @@ public abstract class AbstractQueuedSynchronizer extends AbstractOwnableSynchron
         return node;
     }
 
-    //设置同步队列的头节点
+    //设置等待队列的头节点
     private void setHead(Node node) {
         head = node;
         node.thread = null;
         node.prev = null;
     }
 
-    //唤醒node节点（也就是head）的后继节点
+    //唤醒node节点（也就是head）的后继节点(如果存在的话)
     private void unparkSuccessor(Node node) {
         int ws = node.waitStatus;
         if (ws < 0)
@@ -308,7 +319,7 @@ public abstract class AbstractQueuedSynchronizer extends AbstractOwnableSynchron
      */
     private final boolean parkAndCheckInterrupt() {
         LockSupport.park(this);
-        return Thread.interrupted(); //判断当前线程在等待获取锁的过程中是否被打断（不清除打断标记）
+        return Thread.interrupted(); //判断当前线程在等待获取锁的过程中是否被打断（清除打断标记）
     }
 
     /**
@@ -329,7 +340,7 @@ public abstract class AbstractQueuedSynchronizer extends AbstractOwnableSynchron
                  * 2.node线程没有获取到锁，继续执行下面另一个if的代码
                  *  此时有两种情况：1)node不是head的后继节点，没有资格抢锁；2)node是head的后继节点但抢锁没成功
                  */
-                if (p == head && tryAcquire(arg)) {
+                if (p == head && tryAcquire(arg)) { //第二次尝试获取锁
                     setHead(node);
                     p.next = null; // help GC
                     failed = false;
@@ -520,7 +531,7 @@ public abstract class AbstractQueuedSynchronizer extends AbstractOwnableSynchron
     // 模板方法，需要子类实现获取锁/释放锁的方法
 
     /**
-     * 独占式获取同步状态
+     * 尝试获取独占锁
      *
      * 需要子类实现的抢锁的方法
      * 目前可以理解为通过CAS修改state的值，成功即为抢到锁，返回true；否则返回false。
@@ -561,8 +572,11 @@ public abstract class AbstractQueuedSynchronizer extends AbstractOwnableSynchron
      * 3.线程没有抢到锁，addWaiter()方法将当前线程封装成node加入同步队列，并将node交由acquireQueued()处理。
      */
     public final void acquire(int arg) {
-        if (!tryAcquire(arg) &&  //子类的获取锁操作，第二次尝试获取锁
+        if (!tryAcquire(arg) &&  //子类的获取锁操作，第一次尝试获取锁
                 acquireQueued(addWaiter(Node.EXCLUSIVE), arg)) //获取锁失败进入等待队列中（独占模式）
+
+            //在acquireQueued中会对线程的中断状态做判断，如果中断了则返回true，进入selfInterrupt()方法，恢复线程的中断状态。
+            //但注意此处是在获取到锁之后再响应中断，在获取到锁之前不会做出响应。
             selfInterrupt();  //进入到该方法，说明在等待获取锁的过程中，该线程被打断。
     }
 
